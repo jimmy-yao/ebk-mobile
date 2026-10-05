@@ -70,14 +70,22 @@ jobs:
           path: build/app/outputs/flutter-apk/*.apk
           retention-days: 14
 
-      - name: 打 tag 时发 GitHub Release
+      - name: 打 tag 时发 GitHub Release（幂等：已存在则只补传产物）
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            build/app/outputs/flutter-apk/app-release.apk \
-            --title "$GITHUB_REF_NAME" --generate-notes
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          flags=()
+          case "$GITHUB_REF_NAME" in
+            v0.*) flags+=(--prerelease) ;;
+          esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$apk" \
+              --title "$GITHUB_REF_NAME" --generate-notes "${flags[@]}"
+          fi
 
   smoke:
     name: API 契约冒烟（线上实例）
