@@ -1,3 +1,4 @@
+import 'package:ebk_mobile/core/util/money.dart';
 import 'package:ebk_mobile/data/dto/account_dto.dart';
 import 'package:ebk_mobile/data/dto/transaction_dto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -101,7 +102,7 @@ void main() {
   });
 
   group('Account.fromJson', () {
-    test('解析账户（balance 是已格式化字符串，isAsset 优先）', () {
+    test('解析账户（balance 是最小单位整数串，isAsset 优先）', () {
       final account = Account.fromJson(const {
         'id': '556677889900112233',
         'name': '现金钱包',
@@ -112,7 +113,7 @@ void main() {
         'iconType': 1,
         'color': '3B7DD8', // 服务端要求 6 位、不带 #
         'currency': 'CNY',
-        'balance': '1234.56',
+        'balance': '123456', // 实测：Int64ToString(a.Balance)，1234.56 元 = 123456 分
         'comment': '',
         'displayOrder': 1,
         'isAsset': true,
@@ -122,8 +123,9 @@ void main() {
 
       expect(account.isAsset, isTrue);
       expect(account.isLiability, isFalse);
-      expect(account.balance, '1234.56');
+      expect(account.balance, '123456');
       expect(account.balanceMinor, 123456);
+      expect(formatAmount(account.balanceMinor, account.currency), '1234.56');
       expect(account.currency, 'CNY');
       expect(account.hidden, isFalse);
     });
@@ -134,7 +136,7 @@ void main() {
         'name': '信用卡',
         'category': 3,
         'currency': 'CNY',
-        'balance': '-500.00',
+        'balance': '-50000',
         'isLiability': true,
       });
       expect(account.isAsset, isFalse);

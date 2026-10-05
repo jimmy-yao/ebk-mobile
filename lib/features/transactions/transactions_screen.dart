@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../data/dto/transaction_dto.dart';
@@ -76,9 +77,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         centerTitle: true,
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('记账表单在 Phase 1 第 3 周实现')),
-        ),
+        onPressed: () => context.push('/transactions/new'),
         child: const Icon(Icons.add),
       ),
       body: pageAsync.when(

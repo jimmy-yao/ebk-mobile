@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/util/money.dart';
 import '../../data/dto/transaction_dto.dart';
@@ -56,9 +57,7 @@ class TransactionTile extends StatelessWidget {
           ),
         ],
       ),
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('明细详情页在 Phase 1 第 3 周实现')),
-      ),
+      onTap: () => context.push('/transactions/${tx.id}/edit'),
     );
   }
 

@@ -35,7 +35,9 @@ class Account {
   /// 6 位十六进制，**不带 #**（服务端 `len=6, validHexRGBColor`）
   final String color;
   final String currency;
-  /// 已格式化的十进制字符串，如 "12.34"（不要再除 100）
+  /// **最小单位整数字符串**：服务端 `Balance: utils.Int64ToString(a.Balance)`，
+  /// 实测支出 1234 分后返回 `"-1234"`（不是 "−12.34" 的十进制串）。
+  /// 展示时用 `formatAmount(balance)` 除 100 即可。
   final String balance;
   final String comment;
   final int displayOrder;
@@ -45,26 +47,7 @@ class Account {
   final List<Account> subAccounts;
 
   /// balance → 最小单位（分），用于汇总
-  int get balanceMinor {
-    try {
-      return _parseDecimal(balance);
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  static int _parseDecimal(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) return 0;
-    final negative = trimmed.startsWith('-');
-    final digits = negative ? trimmed.substring(1) : trimmed;
-    final parts = digits.split('.');
-    final major = int.tryParse(parts[0]) ?? 0;
-    final fracRaw = parts.length > 1 ? parts[1] : '';
-    final frac = int.tryParse(fracRaw.padRight(2, '0').substring(0, 2)) ?? 0;
-    final minor = major * 100 + frac;
-    return negative ? -minor : minor;
-  }
+  int get balanceMinor => int.tryParse(balance.trim()) ?? 0;
 
   /// 服务端 assetAccountCategory 表里算资产的类别（其余为负债）
   static const _assetCategories = <int>{1, 2, 4, 6, 7, 8, 9};

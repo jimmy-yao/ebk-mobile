@@ -35,12 +35,28 @@ class Category {
             : (json['icon'] is int ? json['icon'] as int : 0),
         hidden: json['hidden'] == true,
         parentId: json['parentId']?.toString() ?? '0',
-        children: (json['children'] as List<dynamic>?)
+        // 服务端字段名是 subCategories（TransactionCategoryInfoResponse）
+        children: (json['subCategories'] as List<dynamic>?)
                 ?.whereType<Map<String, dynamic>>()
                 .map(Category.fromJson)
                 .toList() ??
             const [],
       );
+
+  /// 前序遍历成一维列表，`depth` 供 UI 缩进用
+  static List<MapEntry<Category, int>> flatten(List<Category> categories) {
+    final out = <MapEntry<Category, int>>[];
+
+    void walk(List<Category> items, int depth) {
+      for (final c in items) {
+        out.add(MapEntry(c, depth));
+        walk(c.children, depth + 1);
+      }
+    }
+
+    walk(categories, 0);
+    return out;
+  }
 }
 
 class Tag {

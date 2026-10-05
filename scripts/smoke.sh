@@ -4,7 +4,7 @@
 # 用法:
 #   cp .env.example .env      # 填 EBK_USER / EBK_PASS
 #   ./scripts/smoke.sh        # 只读检查（默认）
-#   ./scripts/smoke.sh --crud  # 额外跑"建账户→改→删"的写操作
+#   ./scripts/smoke.sh --crud  # 额外跑写通路：账户 建→改→删、明细 记→读→改→转账→删
 #
 # 退出码: 0 = 全部通过; 1 = 有 FAIL; 2 = 前置条件不满足
 set -uo pipefail
@@ -242,6 +242,133 @@ if [ "$RUN_CRUD" = 1 ]; then
       "{\"id\":\"$AID\",\"name\":\"$NAME-mod\",\"category\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\"}"
     ok_json && record "8b. 改账户 POST /accounts/modify.json" 0 "HTTP $HTTP_CODE" \
             || record "8b. 改账户 POST /accounts/modify.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+
+    # ---------- 9. 明细写通路（payload 与 App 记账表单 TxDraft 逐字段一致） ----------
+    # 实测契约：
+    #   * categoryId 必须是**子分类**：一级分类 → 206005、空串 → 200000、type 不符 → 206002
+    #   * 转账也必须选 type=3 的子分类（不能省）
+    #   * 金额=正数最小单位（服务端做 -Amount 扣减，见 services/transactions.go 余额累计）
+    #   * 非转账 destinationAmount 必须为 0；同币种转账 src/dst 金额相等
+    req GET /api/v1/transaction/categories/list.json
+    CATS_BODY="$BODY_FILE"
+    pick_sub_cat() { # pick_sub_cat <type:1|2|3> -> 第一个可用子分类 id
+      python3 -c "
+import json, sys
+d = json.load(open('$CATS_BODY'))['result']
+for p in d.get('$1', []):
+    if p.get('hidden'):
+        continue
+    for c in p.get('subCategories', []):
+        if not c.get('hidden'):
+            print(c['id']); sys.exit()
+"
+    }
+    ECAT="$(pick_sub_cat 2)"
+    TCAT="$(pick_sub_cat 3)"
+
+    if [ -z "$ECAT" ] || [ -z "$TCAT" ]; then
+      record "9. 明细写通路（记账表单契约）" 1 "拿不到支出/转账子分类，无法继续"
+    else
+      # 转账目标账户
+      req POST /api/v1/accounts/add.json \
+        "{\"name\":\"SMOKE2-$TS\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"1F9D55\",\"currency\":\"CNY\",\"balance\":\"0\",\"comment\":\"smoke 临时账户2\"}"
+      AID2="$(jget "d.get('result',{}).get('id','')")"
+      TX_NOW="$(date +%s)"
+      acct_bal() { # acct_bal <account_id> -> 余额字符串
+        req GET /api/v1/accounts/list.json
+        python3 -c "
+import json, sys
+for a in json.load(open('$BODY_FILE'))['result']:
+    if a['id'] == '$1':
+        print(a['balance']); sys.exit()
+print('NOTFOUND')
+"
+      }
+
+      # 9a. 记一笔支出（字段顺序与 TxDraft 一致）
+      req POST /api/v1/transactions/add.json \
+        "{\"type\":3,\"categoryId\":\"$ECAT\",\"time\":$TX_NOW,\"utcOffset\":480,\"sourceAccountId\":\"$AID\",\"destinationAccountId\":\"0\",\"sourceAmount\":1234,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 测试\"}"
+      TXID="$(jget "d.get('result',{}).get('id','')")"
+      if [ -n "$TXID" ]; then
+        record "9a. 记一笔支出 POST /transactions/add.json" 0 "id=$TXID 金额=1234分"
+      else
+        record "9a. 记一笔支出 POST /transactions/add.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+        TXID=""
+      fi
+
+      if [ -n "$TXID" ]; then
+      # 9b. 读回逐字段比对
+      req GET "/api/v1/transactions/get.json?id=$TXID"
+      TX_TYPE="$(jget "d.get('result',{}).get('type','')")"
+      TX_AMT="$(jget "d.get('result',{}).get('sourceAmount','')")"
+      TX_CMT="$(jget "d.get('result',{}).get('comment','')")"
+      if [ "$TX_TYPE" = "3" ] && [ "$TX_AMT" = "1234" ] && [ "$TX_CMT" = "smoke 测试" ]; then
+        record "9b. GET /transactions/get.json 字段一致" 0 "type=3 amount=1234 comment 中文原样"
+      else
+        record "9b. GET /transactions/get.json 字段一致" 1 "type=$TX_TYPE amount=$TX_AMT comment=$TX_CMT"
+      fi
+
+      # 9c. 余额符号：支出传**正数**，服务端扣减。
+      #     注意 accounts/list.json 的 balance 是 **最小单位整数字符串**
+      #     （models/account.go: Balance: utils.Int64ToString(a.Balance)），不是元。
+      BAL="$(acct_bal "$AID")"
+      if [ "$BAL" = "-1234" ]; then
+        record "9c. 余额符号（支出金额为正数）" 0 "balance=$BAL（最小单位）"
+      else
+        record "9c. 余额符号（支出金额为正数）" 1 "期望 -1234，实际 $BAL"
+      fi
+
+      # 9d. 改明细（金额 1234 → 999，备注改写）
+      req POST /api/v1/transactions/modify.json \
+        "{\"id\":\"$TXID\",\"type\":3,\"categoryId\":\"$ECAT\",\"time\":$TX_NOW,\"utcOffset\":480,\"sourceAccountId\":\"$AID\",\"destinationAccountId\":\"0\",\"sourceAmount\":999,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"已修改\"}"
+      MOD_OK=0; ok_json && MOD_OK=1
+      req GET "/api/v1/transactions/get.json?id=$TXID"
+      TX_CMT2="$(jget "d.get('result',{}).get('comment','')")"
+      TX_AMT2="$(jget "d.get('result',{}).get('sourceAmount','')")"
+      BAL2="$(acct_bal "$AID")"
+      if [ "$MOD_OK" = 1 ] && [ "$TX_CMT2" = "已修改" ] && [ "$TX_AMT2" = "999" ] && [ "$BAL2" = "-999" ]; then
+        record "9d. 改明细 POST /transactions/modify.json" 0 "amount=999 comment 已改，余额重算 $BAL2"
+      else
+        record "9d. 改明细 POST /transactions/modify.json" 1 "modify_ok=$MOD_OK amount=$TX_AMT2 comment=$TX_CMT2 balance=$BAL2"
+      fi
+
+      # 9e. 转账 A → B（同币种，src/dst 金额相等）：A=-999-500，B=+500
+      if [ -n "$AID2" ]; then
+        req POST /api/v1/transactions/add.json \
+          "{\"type\":4,\"categoryId\":\"$TCAT\",\"time\":$TX_NOW,\"utcOffset\":480,\"sourceAccountId\":\"$AID\",\"destinationAccountId\":\"$AID2\",\"sourceAmount\":500,\"destinationAmount\":500,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 转账\"}"
+        TXID2="$(jget "d.get('result',{}).get('id','')")"
+        TXID2_ERR="$(jget "d.get('errorMessage','')")"
+        BAL_A="$(acct_bal "$AID")"; BAL_B="$(acct_bal "$AID2")"
+        if [ -n "$TXID2" ] && [ "$BAL_A" = "-1499" ] && [ "$BAL_B" = "500" ]; then
+          record "9e. 转账 POST /add.json type=4" 0 "A=$BAL_A B=$BAL_B"
+        else
+          # 断言失败也不清空 TXID2：9f 必须能把它删掉，绝不留脏数据
+          record "9e. 转账 POST /add.json type=4" 1 "err=$TXID2_ERR A=$BAL_A B=$BAL_B"
+        fi
+      else
+        TXID2=""
+        record "9e. 转账 POST /add.json type=4" 1 "转账目标账户没建起来"
+      fi
+
+      # 9f. 删除明细 + 临时账户 → 数据还原
+      for id in "$TXID" "$TXID2"; do
+        [ -z "$id" ] && continue
+        req POST /api/v1/transactions/delete.json "{\"id\":\"$id\"}"
+        ok_json || printf '      删除明细 %s 失败: %s\n' "$id" "$(jget "d.get('errorMessage','')")"
+      done
+      else
+        TXID2=""
+      fi
+      # 无论 9a 是否成功，转账目标账户都要删掉，保证数据还原
+      [ -n "$AID2" ] && req POST /api/v1/accounts/delete.json "{\"id\":\"$AID2\"}"
+      BAL_A="$(acct_bal "$AID")"
+      if [ "$BAL_A" = "0" ]; then
+        record "9f. 删明细后余额还原" 0 "balance=$BAL_A（+临时账户已删）"
+      else
+        record "9f. 删明细后余额还原" 1 "期望 0，实际 $BAL_A"
+      fi
+    fi
+
     req POST /api/v1/accounts/delete.json "{\"id\":\"$AID\"}"
     ok_json && record "8c. 删账户 POST /accounts/delete.json" 0 "HTTP $HTTP_CODE（数据已还原）" \
             || record "8c. 删账户 POST /accounts/delete.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"

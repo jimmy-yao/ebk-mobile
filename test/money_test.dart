@@ -42,4 +42,21 @@ void main() {
       expect(parseDecimalToMinor(''), 0);
     });
   });
+
+  group('minorToInput', () {
+    test('最小单位 → 输入框文本（固定两位）', () {
+      expect(minorToInput(1234), '12.34');
+      expect(minorToInput(5), '0.05');
+      expect(minorToInput(0), '0.00');
+      expect(minorToInput(-1234), '-12.34');
+      expect(minorToInput(10000), '100.00');
+    });
+
+    test('与 parseDecimalToMinor 严格往返（编辑回填不丢精度）', () {
+      for (final minor in [0, 1, 5, 99, 100, 1234, 999999, -1, -1234]) {
+        expect(parseDecimalToMinor(minorToInput(minor)), minor,
+            reason: 'minor=$minor');
+      }
+    });
+  });
 }

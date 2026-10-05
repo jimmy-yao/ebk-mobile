@@ -4,8 +4,10 @@
 /// （见 src/components/desktop/CustomChart.vue），货币小数位见
 /// src/consts/currency.ts 的 `fraction` 字段（JPY/KRW 等为 0）。
 ///
-/// 账户接口的 `balance` 字段则已经是服务端格式化好的十进制字符串（如 "12.34"），
-/// 直接展示即可，不要再除 100。
+/// 账户接口的 `balance` 字段是**最小单位整数字符串**（服务端
+/// `Balance: utils.Int64ToString(a.Balance)`，实测支出 1234 分后返回 `"-1234"`），
+/// 展示时仍要用 [formatAmount] 除 100；[parseDecimalToMinor] 用于把输入框
+/// 的十进制串转回最小单位。
 library;
 
 /// 常见 0 位小数货币（未收录的一律按 2 位处理）
@@ -51,7 +53,7 @@ String formatAmount(int minor, String currency) {
   return buffer.toString();
 }
 
-/// 解析十进制字符串金额（如账户 balance "12.34"）→ 最小单位
+/// 解析十进制字符串金额（如输入框 "12.34"）→ 最小单位
 int parseDecimalToMinor(String value) {
   final trimmed = value.trim();
   if (trimmed.isEmpty) return 0;
@@ -63,4 +65,16 @@ int parseDecimalToMinor(String value) {
   final frac = int.tryParse(fracRaw.padRight(2, '0').substring(0, 2)) ?? 0;
   final minor = major * 100 + frac;
   return negative ? -minor : minor;
+}
+
+/// 最小单位 → 输入框文本，固定两位小数（`1234 → "12.34"`、`5 → "0.05"`）。
+///
+/// 和 [formatAmount] 不同：**不看货币小数位**，因为记账输入必须能原样回读
+/// （`parseDecimalToMinor(minorToInput(x)) == x`），JPY 用户输入 "100.00"
+/// 也照收，提交时就是 10000 分。
+String minorToInput(int minor) {
+  final negative = minor < 0;
+  final abs = minor.abs();
+  final text = '${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}';
+  return negative ? '-$text' : text;
 }

@@ -7,6 +7,7 @@ import '../features/auth/login_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/app_shell.dart';
+import '../features/transactions/transaction_edit_screen.dart';
 import '../features/transactions/transactions_screen.dart';
 
 /// 登录态变化时由 TokenStore.listenable 触发重新 redirect
@@ -28,6 +29,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      // 记账表单全屏压在底部导航之上（新建 / 编辑）
+      GoRoute(
+        path: '/transactions/new',
+        builder: (context, state) => const TransactionEditScreen(),
+      ),
+      GoRoute(
+        path: '/transactions/:id/edit',
+        builder: (context, state) => TransactionEditScreen(
+          transactionId: state.pathParameters['id'],
+        ),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => AppShell(shell: shell),

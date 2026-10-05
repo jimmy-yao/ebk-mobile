@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/util/money.dart';
 import '../../data/dto/account_dto.dart';
 import '../../data/repositories/account_repository.dart';
 
@@ -98,7 +99,8 @@ class _AccountTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(
-            account.balance,
+            // balance 是最小单位整数串（"-1234"），必须 formatAmount 除 100
+            formatAmount(account.balanceMinor, account.currency),
             style: theme.textTheme.titleMedium,
           ),
           if (account.comment.isNotEmpty)
