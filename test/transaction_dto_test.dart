@@ -101,41 +101,52 @@ void main() {
   });
 
   group('Account.fromJson', () {
-    test('解析账户（balance 是已格式化字符串）', () {
+    test('解析账户（balance 是已格式化字符串，isAsset 优先）', () {
       final account = Account.fromJson(const {
         'id': '556677889900112233',
         'name': '现金钱包',
         'parentId': '0',
-        'category': 0,
-        'type': 1,
+        'category': 1, // ACCOUNT_CATEGORY_CASH
+        'type': 1, // SINGLE_ACCOUNT
         'icon': '1',
         'iconType': 1,
-        'color': '#3B7DD8',
+        'color': '3B7DD8', // 服务端要求 6 位、不带 #
         'currency': 'CNY',
         'balance': '1234.56',
         'comment': '',
         'displayOrder': 1,
+        'isAsset': true,
         'hidden': false,
         'subAccounts': [],
       });
 
       expect(account.isAsset, isTrue);
+      expect(account.isLiability, isFalse);
       expect(account.balance, '1234.56');
       expect(account.balanceMinor, 123456);
       expect(account.currency, 'CNY');
       expect(account.hidden, isFalse);
     });
 
-    test('负债账户', () {
+    test('负债账户（信用卡 category=3，isLiability=true）', () {
       final account = Account.fromJson(const {
         'id': '2',
         'name': '信用卡',
-        'category': 1,
+        'category': 3,
         'currency': 'CNY',
         'balance': '-500.00',
+        'isLiability': true,
       });
       expect(account.isAsset, isFalse);
+      expect(account.isLiability, isTrue);
       expect(account.balanceMinor, -50000);
+    });
+
+    test('没有 isAsset 标志时按 category 枚举兜底', () {
+      final asset = Account.fromJson(const {'category': 7}); // 投资
+      final debt = Account.fromJson(const {'category': 5}); // 债务
+      expect(asset.isAsset, isTrue);
+      expect(debt.isLiability, isTrue);
     });
   });
 }

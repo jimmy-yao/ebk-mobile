@@ -40,11 +40,17 @@ class TransactionRepository {
     return TransactionPage.fromJson(result as Map<String, dynamic>);
   }
 
-  /// `GET /api/v1/transactions/count.json` —— 用于徽标数字
-  Future<int> count({required int startTime, required int endTime}) async {
+  /// `GET /api/v1/transactions/count.json` —— 用于徽标数字。
+  /// 时间参数是 `max_time` / `min_time`（**不是** start_time/end_time），
+  /// 语义是 time sequence id（models.TransactionCountRequest）
+  Future<int> count({int? maxTime, int? minTime}) async {
+    final query = <String, dynamic>{};
+    if (maxTime != null) query['max_time'] = maxTime;
+    if (minTime != null) query['min_time'] = minTime;
+
     final result = await _api.get(
       '/api/v1/transactions/count.json',
-      query: {'start_time': startTime, 'end_time': endTime},
+      query: query.isEmpty ? null : query,
     );
     if (result is int) return result;
     if (result is Map<String, dynamic>) {

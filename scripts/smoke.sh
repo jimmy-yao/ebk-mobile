@@ -135,8 +135,11 @@ check "3a. 分类列表 GET /api/v1/transaction/categories/list.json" "/api/v1/t
 check "3b. 标签列表 GET /api/v1/transaction/tags/list.json"        "/api/v1/transaction/tags/list.json"
 check "3c. 标签组列表 GET /api/v1/transaction/tags/groups/list.json" "/api/v1/transaction/tags/groups/list.json"
 check "3d. 交易计数 GET /api/v1/transactions/count.json"           "/api/v1/transactions/count.json"
-check "3e. 交易明细 GET /api/v1/transactions/list.json"            "/api/v1/transactions/list.json"
-check "3f. 按月明细 GET /api/v1/transactions/list/by_month.json"   "/api/v1/transactions/list/by_month.json"
+# list.json 的 count 是 required（models.TransactionListByMaxTimeRequest），不带就 400
+check "3e. 交易明细 GET /api/v1/transactions/list.json"            "/api/v1/transactions/list.json?count=10&with_count=true"
+# by_month.json 的 year/month 是 required
+NOW_YEAR="$(date +%Y)"; NOW_MONTH="$(date +%-m)"
+check "3f. 按月明细 GET /api/v1/transactions/list/by_month.json"   "/api/v1/transactions/list/by_month.json?year=$NOW_YEAR&month=$NOW_MONTH"
 check "3g. 统计 GET /api/v1/transactions/statistics.json"          "/api/v1/transactions/statistics.json"
 check "3h. 趋势 GET /api/v1/transactions/statistics/trends.json"   "/api/v1/transactions/statistics/trends.json"
 check "3i. 资产趋势 GET /api/v1/transactions/statistics/asset_trends.json" "/api/v1/transactions/statistics/asset_trends.json"
@@ -145,22 +148,30 @@ check "3k. 数据统计 GET /api/v1/data/statistics.json"              "/api/v1/
 check "3l. 版本 GET /api/v1/systems/version.json"                  "/api/v1/systems/version.json"
 
 # ---------- 4. Q4: 明细列表的分页/时间参数（实测探测） ----------
-probe_param() { # probe_param <param=value>
-  req GET "/api/v1/transactions/list.json?$1"
+# 基线必须带 count（required, 1..50）；逐个试其它参数看服务端是否接受
+probe_param() { # probe_param <path> <param=value>
+  req GET "$1&$2"
   local msg; msg="$(jget "d.get('errorMessage','')")"
-  if ok_json; then printf '      %-28s -> 接受 (HTTP %s)\n' "$1" "$HTTP_CODE"; return 0; fi
-  printf '      %-28s -> 拒绝 (HTTP %s %s)\n' "$1" "$HTTP_CODE" "$msg"; return 1
+  if ok_json; then printf '      %-32s -> 接受 (HTTP %s)\n' "$2" "$HTTP_CODE"; return 0; fi
+  printf '      %-32s -> 拒绝 (HTTP %s %s)\n' "$2" "$HTTP_CODE" "$msg"; return 1
 }
-echo "   Q4 明细列表参数探测（用于定 DTO 的 query 字段）:"
-probe_param "page=1"        >/dev/null && PAGE_OK=1 || PAGE_OK=0
-probe_param "page_size=5"   >/dev/null && PSIZE_OK=1 || PSIZE_OK=0
-probe_param "start_time=1756608000" >/dev/null && STIME_OK=1 || STIME_OK=0
-probe_param "end_time=1759286400"   >/dev/null && ETIME_OK=1 || ETIME_OK=0
-probe_param "time_range=month"      >/dev/null && TRANGE_OK=1 || TRANGE_OK=0
-Q4_DETAIL="page=$PAGE_OK page_size=$PSIZE_OK start_time=$STIME_OK end_time=$ETIME_OK time_range=$TRANGE_OK"
-[ "$PAGE_OK$PSIZE_OK$STIME_OK$ETIME_OK" = "0000" ] \
-  && record "4. Q4 明细列表参数探测" -1 "$Q4_DETAIL（全被拒，需查 models 绑定字段）" \
-  || record "4. Q4 明细列表参数探测" 0 "$Q4_DETAIL（1=接受）"
+echo "   Q4 明细列表参数探测（list.json 基线 count=10；1=接受）:"
+LIST_BASE="/api/v1/transactions/list.json?count=10&with_count=true"
+probe_param "$LIST_BASE" "page=1"                 >/dev/null && PAGE_OK=1 || PAGE_OK=0
+probe_param "$LIST_BASE" "count=20"               >/dev/null && CNT_OK=1  || CNT_OK=0
+probe_param "$LIST_BASE" "max_time=1759286400"    >/dev/null && MAXT_OK=1 || MAXT_OK=0
+probe_param "$LIST_BASE" "min_time=1756608000"    >/dev/null && MINT_OK=1 || MINT_OK=0
+probe_param "$LIST_BASE" "keyword=test"           >/dev/null && KW_OK=1   || KW_OK=0
+probe_param "$LIST_BASE" "type=3"                 >/dev/null && TYPE_OK=1 || TYPE_OK=0
+probe_param "$LIST_BASE" "with_pictures=true"     >/dev/null && PIC_OK=1  || PIC_OK=0
+probe_param "/api/v1/transactions/list/by_month.json?year=$NOW_YEAR&month=$NOW_MONTH" \
+            "trim_account=true"                   >/dev/null && TRIM_OK=1 || TRIM_OK=0
+Q4_DETAIL="list.json: page=$PAGE_OK count=$CNT_OK max_time=$MAXT_OK min_time=$MINT_OK keyword=$KW_OK type=$TYPE_OK with_pictures=$PIC_OK | by_month: trim_account=$TRIM_OK"
+if [ "$PAGE_OK$CNT_OK" = "11" ]; then
+  record "4. Q4 明细列表参数探测" 0 "$Q4_DETAIL"
+else
+  record "4. Q4 明细列表参数探测" 1 "$Q4_DETAIL"
+fi
 
 # ---------- 5. Q2: 鉴权失败的错误形态 ----------
 SAVE_TOKEN="$TOKEN"; TOKEN="invalid-token-for-smoke"
@@ -219,17 +230,21 @@ fi
 if [ "$RUN_CRUD" = 1 ]; then
   TS=$(date +%s)
   NAME="SMOKE-$TS"
+  # 字段取自 models.AccountCreateRequest：
+  #   category 必填(1..9)、type 必填(1/2)、icon 是 "字符串化的 int64"、
+  #   color 必须 6 位且**不带 #**、currency 3 位
   req POST /api/v1/accounts/add.json \
-    "{\"name\":\"$NAME\",\"type\":1,\"currency\":\"CNY\",\"icon\":\"wallet\",\"color\":\"#3B7DD8\",\"sort\":9999}"
+    "{\"name\":\"$NAME\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"currency\":\"CNY\",\"balance\":\"0\",\"comment\":\"smoke 临时账户\"}"
   AID="$(jget "d.get('result',{}).get('id','')")"
   if [ -n "$AID" ]; then
     record "8a. 建账户 POST /accounts/add.json" 0 "id=$AID"
-    req POST /api/v1/accounts/modify.json "{\"id\":\"$AID\",\"name\":\"$NAME-mod\",\"type\":1,\"currency\":\"CNY\",\"icon\":\"wallet\",\"color\":\"#3B7DD8\",\"sort\":9999}"
+    req POST /api/v1/accounts/modify.json \
+      "{\"id\":\"$AID\",\"name\":\"$NAME-mod\",\"category\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\"}"
     ok_json && record "8b. 改账户 POST /accounts/modify.json" 0 "HTTP $HTTP_CODE" \
-            || record "8b. 改账户 POST /accounts/modify.json" 1 "HTTP $HTTP_CODE"
+            || record "8b. 改账户 POST /accounts/modify.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
     req POST /api/v1/accounts/delete.json "{\"id\":\"$AID\"}"
     ok_json && record "8c. 删账户 POST /accounts/delete.json" 0 "HTTP $HTTP_CODE（数据已还原）" \
-            || record "8c. 删账户 POST /accounts/delete.json" 1 "HTTP $HTTP_CODE"
+            || record "8c. 删账户 POST /accounts/delete.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
   else
     record "8a. 建账户 POST /accounts/add.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
   fi

@@ -17,7 +17,7 @@ class Category {
 
   final String id;
   final String name;
-  /// 2=收入 3=支出（与交易类型同值域，0/1 为系统预留）
+  /// 类型（源码 CATEGORY_TYPE_*）：1=收入 2=支出 3=转账
   final int type;
   final String color;
   final int icon;
