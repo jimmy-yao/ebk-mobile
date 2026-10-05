@@ -1,0 +1,10 @@
+.env
+.dart_tool/
+build/
+.flutter-plugins*
+*.iml
+.idea/
+# 签名材料（key.properties 与 keystore 一律不入库，CI 从 Secrets 解出）
+key.properties
+*.jks
+*.keystore
