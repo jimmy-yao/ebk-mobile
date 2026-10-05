@@ -51,6 +51,11 @@ febk flutter build apk --release
 
 镜像 `ebk-flutter` 由 `/root/ebk-apk/Dockerfile.flutter` 构建（Flutter 3.47.6 stable，arm64 原生）。
 
+> **release 出包走 CI**：本机 arm64 的 `gen_snapshot` 只有 x64 版，qemu-user 跑真实 AOT 会崩
+> （`flutter build apk --release` → `AOT snapshotter exited with code -11`），所以
+> `analyze` / `test` / `build apk --debug` 在本机跑，**`--release` 交给 GitHub Actions**
+> （`.github/workflows/ci.yml`，已实测通过，产物在 run 的 artifact 里）。详见方案文档 §7.1。
+
 ## 签名
 
 - keystore：`/root/ebk-apk/ezbookkeeping.keystore`（alias `ebk`，有效期到 2054）
