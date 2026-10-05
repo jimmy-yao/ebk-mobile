@@ -21,7 +21,10 @@ class AuthRepository {
   Future<LoginResult> login(String username, String password) async {
     final result = await _api.post(
       '/api/authorize.json',
-      body: {'username': username, 'password': password},
+      // 字段是 loginName/password（models.UserLoginRequest），
+      // 且 password 有 min=6 的 binding —— 写错字段名时服务端返回的是
+      // 同一句 "login name or password is invalid"，很容易误判
+      body: {'loginName': username, 'password': password},
     );
     return LoginResult.fromJson(result as Map<String, dynamic>);
   }

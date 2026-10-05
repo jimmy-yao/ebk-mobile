@@ -92,7 +92,7 @@ if [ -z "$EBK_USER" ] || [ -z "$EBK_PASS" ]; then
 fi
 
 # ---------- 1. 登录 ----------
-req POST /api/authorize.json "{\"username\":\"$EBK_USER\",\"password\":\"$EBK_PASS\"}"
+req POST /api/authorize.json "{\"loginName\":\"$EBK_USER\",\"password\":\"$EBK_PASS\"}"
 TOKEN="$(jget "d.get('result',{}).get('token','')")"
 NEED_2FA="$(jget "d.get('result',{}).get('need2FA')")"
 if [ "$NEED_2FA" = "True" ]; then
