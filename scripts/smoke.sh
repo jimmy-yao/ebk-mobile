@@ -599,6 +599,109 @@ print('NOTFOUND')
     else
       record "10i. 标签 增→改→隐藏→删" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
     fi
+    # ---------- 11. 搜索/筛选参数实测（App 明细页发的就是这几个键） ----------
+    # 实测契约（models.TransactionListRequest / TransactionListInMonthByPageRequest）：
+    #   * keyword + match_mode=1 → 忽略大小写（0 会区分大小写，写死 1）
+    #   * category_ids 传**一级**分类 id 时服务端自动展开成它的子分类
+    #   * account_ids 逗号分隔；**参数名写错时服务端直接忽略**（返回全量），
+    #     所以必须有负向断言，否则拼错键名也不会报错
+    #   * by_month.json 没有 with_count/page/count：totalCount = 本页条数（= 当月命中总数）
+    count_tx() { # count_tx "<query>" -> list.json 的 totalCount
+      req GET "/api/v1/transactions/list.json?count=50&page=1&with_count=true$1"
+      python3 -c "
+import json, sys
+d = json.load(open('$BODY_FILE'))
+r = d.get('result') or {}
+print(r.get('totalCount', 0) if isinstance(r, dict) else 0)
+" 2>/dev/null || echo ""
+    }
+
+    # 故意用全小写关键词去撞大写 comment，只有 match_mode=1 才命中
+    KW="smoke-kw-$TS"
+    req POST /api/v1/transactions/add.json \
+      "{\"type\":3,\"categoryId\":\"$ECAT\",\"time\":$(date +%s),\"utcOffset\":480,\"sourceAccountId\":\"$AID\",\"destinationAccountId\":\"0\",\"sourceAmount\":666,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"SMOKE-KW-$TS\"}"
+    TXKW="$(jget "d.get('result',{}).get('id','')")"
+
+    if [ -n "$TXKW" ]; then
+      N_EXACT="$(count_tx "&keyword=SMOKE-KW-$TS&match_mode=1")"
+      N_LOWER="$(count_tx "&keyword=$KW&match_mode=1")"
+      N_CASE0="$(count_tx "&keyword=$KW&match_mode=0")"
+      N_NONE="$(count_tx "&keyword=xyzzy-no-such-keyword-$TS&match_mode=1")"
+      if [ -n "$N_EXACT" ] && [ "$N_EXACT" -ge 1 ] && [ -n "$N_LOWER" ] \
+         && [ "$N_LOWER" -ge 1 ] && [ "$N_NONE" = "0" ]; then
+        record "11a. keyword 搜索 match_mode=1 忽略大小写" 0 "大小写都命中 $N_EXACT/$N_LOWER；mode=0 命中 $N_CASE0；无关词 0"
+      else
+        record "11a. keyword 搜索 match_mode=1 忽略大小写" 1 "exact=$N_EXACT lower=$N_LOWER mode0=$N_CASE0 none=$N_NONE"
+      fi
+    else
+      record "11a. keyword 搜索 match_mode=1 忽略大小写" 1 "记账失败 HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+    fi
+
+    # 11b. category_ids 传一级 id → 展开成子分类
+    req GET /api/v1/transaction/categories/list.json
+    PARENT="$(python3 -c "
+import json, sys
+d = json.load(open('$BODY_FILE'))['result']
+for group in d.values():
+    for p in group:
+        for c in p.get('subCategories', []):
+            if c['id'] == '$ECAT':
+                print(p['id']); sys.exit()
+print('')
+" 2>/dev/null)"
+    OTHER="$(python3 -c "
+import json, sys
+d = json.load(open('$BODY_FILE'))['result']
+for group in d.values():
+    for p in group:
+        if p['id'] != '$PARENT' and p.get('subCategories'):
+            print(p['id']); sys.exit()
+print('')
+" 2>/dev/null)"
+    if [ -n "$PARENT" ]; then
+      N_IN="$(count_tx "&category_ids=$PARENT")"
+      N_OUT="na"
+      [ -n "$OTHER" ] && N_OUT="$(count_tx "&category_ids=$OTHER")"
+      if [ -n "$N_IN" ] && [ "$N_IN" -ge 1 ] && { [ "$N_OUT" = "na" ] || [ "$N_OUT" = "0" ]; }; then
+        record "11b. category_ids 传一级自动展开子分类" 0 "一级 $PARENT 命中 $N_IN；无关一级 $OTHER 命中 $N_OUT"
+      else
+        record "11b. category_ids 传一级自动展开子分类" 1 "parent=$PARENT in=$N_IN other=$OTHER out=$N_OUT"
+      fi
+    else
+      record "11b. category_ids 传一级自动展开子分类" 1 "找不到 $ECAT 的一级分类（$ECAT 是子分类吗？）"
+    fi
+
+    # 11c. account_ids 过滤（带一个空账户做负向断言，参数写错这里会露馅）
+    req POST /api/v1/accounts/add.json \
+      "{\"name\":\"SMOKE-B-$TS\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"2F9E44\",\"currency\":\"CNY\",\"comment\":\"\"}"
+    BID="$(jget "d.get('result',{}).get('id','')")"
+    if [ -n "$BID" ]; then
+      N_A="$(count_tx "&account_ids=$AID")"
+      N_B="$(count_tx "&account_ids=$BID")"
+      if [ -n "$N_A" ] && [ "$N_A" -ge 1 ] && [ "$N_B" = "0" ]; then
+        record "11c. account_ids 过滤" 0 "命中账户 $N_A 笔，空账户 0 笔"
+      else
+        record "11c. account_ids 过滤" 1 "a=$N_A b=$N_B (bid=$BID)"
+      fi
+    else
+      record "11c. account_ids 过滤" 1 "临时账户没建成 HTTP $HTTP_CODE"
+      BID=""
+    fi
+
+    # 11d. by_month.json（App 主列表）认同一套过滤参数
+    req GET "/api/v1/transactions/list/by_month.json?year=$(date +%Y)&month=$(date +%m)&keyword=$KW&match_mode=1"
+    M_TOTAL="$(jget "d.get('result',{}).get('totalCount',-1)")"
+    M_ITEMS="$(jget "len(d.get('result',{}).get('items',[]))")"
+    if [ "$M_TOTAL" -ge 1 ] && [ "$M_TOTAL" = "$M_ITEMS" ]; then
+      record "11d. by_month.json 关键词过滤" 0 "totalCount=$M_TOTAL=items 条数"
+    else
+      record "11d. by_month.json 关键词过滤" 1 "total=$M_TOTAL items=$M_ITEMS"
+    fi
+
+    # 收尾：删掉本节临时数据（分类/账户余额复原）
+    [ -n "$TXKW" ] && req POST /api/v1/transactions/delete.json "{\"id\":\"$TXKW\"}"
+    [ -n "$BID" ] && req POST /api/v1/accounts/delete.json "{\"id\":\"$BID\"}"
+
     req POST /api/v1/accounts/delete.json "{\"id\":\"$AID\"}"
     ok_json && record "8c. 删账户 POST /accounts/delete.json" 0 "HTTP $HTTP_CODE（数据已还原）" \
             || record "8c. 删账户 POST /accounts/delete.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"

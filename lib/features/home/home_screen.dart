@@ -15,7 +15,7 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final now = DateTime.now();
-    final key = MonthKey(now.year, now.month);
+    final key = TxQuery(year: now.year, month: now.month);
     final pageAsync = ref.watch(monthlyTxProvider(key));
 
     return Scaffold(

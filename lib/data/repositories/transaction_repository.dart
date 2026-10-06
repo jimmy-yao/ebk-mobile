@@ -105,13 +105,22 @@ class TransactionRepository {
   /// 按月分页明细（MVP 的主列表）。
   ///
   /// `GET /api/v1/transactions/list/by_month.json`
-  /// 必填 `year`、`month`（源码 TransactionListInMonthByPageRequest），
-  /// 可选过滤：type / category_ids / account_ids / keyword / must_have_pictures ...
+  /// 必填 `year`、`month`（源码 `TransactionListInMonthByPageRequest`），
+  /// 可选过滤：
+  /// * `type` 1..4（不传 = 全部）
+  /// * `category_ids` / `account_ids`：**逗号分隔的 id 串**；传一级分类 id 时
+  ///   服务端会**自动展开成它的子分类**再比对（`GetCategoryOrSubCategoryIds`）
+  /// * `keyword` + `match_mode`：`0`=默认（区分大小写）、`1`=忽略大小写
+  ///   → 这里恒发 `1`，中文不受影响，英文关键词不用管大小写
+  /// * `must_have_pictures`：只看带图的
   Future<TransactionPage> listByMonth({
     required int year,
     required int month,
     int? type,
     String? keyword,
+    String? categoryIds,
+    String? accountIds,
+    bool mustHavePictures = false,
   }) async {
     final query = <String, dynamic>{
       'year': year,
@@ -120,8 +129,18 @@ class TransactionRepository {
       'trim_account': true,
       'trim_category': true,
     };
-    if (type != null) query['type'] = type;
-    if (keyword != null && keyword.isNotEmpty) query['keyword'] = keyword;
+    if (type != null && type > 0) query['type'] = type;
+    if (keyword != null && keyword.isNotEmpty) {
+      query['keyword'] = keyword;
+      query['match_mode'] = 1;
+    }
+    if (categoryIds != null && categoryIds.isNotEmpty) {
+      query['category_ids'] = categoryIds;
+    }
+    if (accountIds != null && accountIds.isNotEmpty) {
+      query['account_ids'] = accountIds;
+    }
+    if (mustHavePictures) query['must_have_pictures'] = true;
 
     final result = await _api.get(
       '/api/v1/transactions/list/by_month.json',

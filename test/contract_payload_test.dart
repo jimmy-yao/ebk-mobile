@@ -24,6 +24,53 @@ ApiClient _clientWith(FakeHttpAdapter adapter) {
 
 void main() {
   group('TransactionRepository payload', () {
+    test('listByMonth：过滤参数与 match_mode 拼法', () async {
+      final adapter = FakeHttpAdapter(
+        (path, body) => ok({'items': <dynamic>[], 'totalCount': 0}),
+      );
+      final repo = TransactionRepository(_clientWith(adapter));
+
+      await repo.listByMonth(
+        year: 2026,
+        month: 10,
+        type: 3,
+        keyword: 'Lunch',
+        categoryIds: '200',
+        accountIds: '7,8',
+      );
+
+      final q = adapter
+          .lastCallFor('/transactions/list/by_month.json')
+          .uri
+          .queryParameters;
+      expect(q['year'], '2026');
+      expect(q['month'], '10');
+      expect(q['type'], '3');
+      expect(q['keyword'], 'Lunch');
+      expect(q['match_mode'], '1', reason: '忽略大小写（0 会区分大小写）');
+      expect(q['category_ids'], '200', reason: '传一级 id，服务端展开成子分类');
+      expect(q['account_ids'], '7,8', reason: '逗号分隔');
+      expect(q['trim_account'], 'true');
+    });
+
+    test('listByMonth：不加过滤时不发 type/keyword 键', () async {
+      final adapter = FakeHttpAdapter(
+        (path, body) => ok({'items': <dynamic>[], 'totalCount': 0}),
+      );
+      final repo = TransactionRepository(_clientWith(adapter));
+
+      await repo.listByMonth(year: 2026, month: 10);
+
+      final q = adapter
+          .lastCallFor('/transactions/list/by_month.json')
+          .uri
+          .queryParameters;
+      expect(q.containsKey('type'), isFalse);
+      expect(q.containsKey('keyword'), isFalse);
+      expect(q.containsKey('category_ids'), isFalse);
+      expect(q.containsKey('account_ids'), isFalse);
+    });
+
     test('add 支出：id 全是字符串、金额为正、非转账 destinationAmount=0', () async {
       final adapter = FakeHttpAdapter((path, body) => ok({'id': '9'}));
       final repo = TransactionRepository(_clientWith(adapter));
