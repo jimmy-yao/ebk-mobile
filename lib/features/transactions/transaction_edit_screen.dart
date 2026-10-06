@@ -331,6 +331,11 @@ class _TransactionEditScreenState
                 onRetry: () => ref.invalidate(accountsProvider),
               ),
               data: (accounts) {
+                // 调整余额(type=1)：网页端才能改金额，App 只给看+删，绝不乱写
+                if (_type == TxType.modifyBalance) {
+                  return _buildAdjustOnlyView(accounts, theme);
+                }
+
                 final flatAccounts = _flattenAccounts(accounts);
                 final source = _accountById(accounts, _sourceAccountId);
 
@@ -649,6 +654,84 @@ class _TransactionEditScreenState
     List<MapEntry<Category, List<Category>>> groups,
   ) =>
       groups.expand((g) => g.value.map((c) => c.id)).toSet();
+
+  /// 「调整余额」(type=1) 记录的只读视图。
+  ///
+  /// 服务端对这类记录有特殊约束（`isCategoryValid`：categoryId 必须为 0，
+  /// 否则 `ErrBalanceModificationTransactionCannotSetCategory`），金额语义是
+  /// "调到某值" 的差额 —— MVP 不猜它的写入规则，只给看和删。
+  Widget _buildAdjustOnlyView(List<Account> accounts, ThemeData theme) {
+    final account = _accountById(accounts, _sourceAccountId);
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SizedBox(height: 32),
+        Icon(Icons.tune, size: 48, color: theme.colorScheme.outline),
+        const SizedBox(height: 12),
+        Text(
+          '余额调整记录',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _kvRow(theme, '账户', account?.name ?? '—'),
+                _kvRow(
+                  theme,
+                  '金额',
+                  '${account?.currency ?? ''} ${_amountCtrl.text}',
+                ),
+                _kvRow(
+                  theme,
+                  '时间',
+                  DateFormat('yyyy-MM-dd HH:mm').format(_time),
+                ),
+                if (_commentCtrl.text.isNotEmpty)
+                  _kvRow(theme, '备注', _commentCtrl.text),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '这类记录由"把账户余额改到某个值"生成，MVP 暂不支持在 App 里修改金额，'
+          '只能删除后到网页端重新调整。',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.outline,
+          ),
+        ),
+        const SizedBox(height: 24),
+        FilledButton.tonalIcon(
+          onPressed: _delete,
+          icon: const Icon(Icons.delete_outline),
+          label: const Text('删除这条记录'),
+        ),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+
+  Widget _kvRow(ThemeData theme, String key, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(key, style: theme.textTheme.bodySmall),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
 
   static List<Account> _flattenAccounts(List<Account> accounts) {
     final out = <Account>[];
