@@ -18,7 +18,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # of the product and file versions while build-number is used as the build suffix.
 # 对齐 GitHub Release 的 tag（v0.1.x）：versionName 出现在「设置 → 应用信息」，
 # versionCode 每次发版递增，保证同机升级是"升级"而不是"重装"。
-version: 0.1.4+14
+version: 0.1.5+15
 
 environment:
   sdk: ^3.13.5

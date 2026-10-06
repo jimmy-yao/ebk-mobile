@@ -82,6 +82,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           out=build/app/outputs/flutter-apk
+          # 版本对齐闸门：versionName 必须等于 tag，否则同机升级语义会乱、
+          # 文档里"版本对齐 tag"的规矩也会悄悄失守（本仓踩过一次：v0.1.5 打在了 0.1.4+14 上）
+          pubver="$(awk '/^version:/{print $2}' pubspec.yaml)"
+          if [ "${pubver%%+*}" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error::pubspec version=$pubver 与 tag=$GITHUB_REF_NAME 不一致"
+            exit 1
+          fi
           # 起个能一眼看出 ABI 的名字，用户照着 release 说明选包
           mkdir -p dist
           cp "$out/app-arm64-v8a-release.apk"   "dist/ebk-mobile-${GITHUB_REF_NAME}-arm64-v8a.apk"
