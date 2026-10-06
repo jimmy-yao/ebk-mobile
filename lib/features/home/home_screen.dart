@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/util/money.dart';
@@ -22,6 +23,11 @@ class HomeScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('首页'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bar_chart),
+            tooltip: '统计',
+            onPressed: () => context.push('/statistics'),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(monthlyTxProvider(key)),

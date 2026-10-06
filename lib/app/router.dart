@@ -9,6 +9,7 @@ import '../features/categories/categories_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/app_shell.dart';
+import '../features/statistics/statistics_screen.dart';
 import '../features/tags/tags_screen.dart';
 import '../features/transactions/transaction_edit_screen.dart';
 import '../features/transactions/transactions_screen.dart';
@@ -45,6 +46,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/tags',
         builder: (context, state) => const TagsScreen(),
+      ),
+      // 统计页（三张图），从首页 AppBar 进入，压在底部导航之上
+      GoRoute(
+        path: '/statistics',
+        builder: (context, state) => const StatisticsScreen(),
       ),
       GoRoute(
         path: '/accounts/:id/edit',

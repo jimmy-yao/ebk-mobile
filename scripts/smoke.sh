@@ -702,6 +702,132 @@ print('')
     [ -n "$TXKW" ] && req POST /api/v1/transactions/delete.json "{\"id\":\"$TXKW\"}"
     [ -n "$BID" ] && req POST /api/v1/accounts/delete.json "{\"id\":\"$BID\"}"
 
+    # ---------- 12. 统计三端点（App 统计页三张图的口径基线） ----------
+    # 用**全新**的两个账户记三笔（支出 1234 / 收入 5678 / 转账 1000），
+    # 这样断言是精确值，不受历史流水影响；断言完即删干净。
+    # 注意：pick_sub_cat 读的是 $BODY_FILE（每次 req 都会覆盖），
+    # 所以调用前必须**重新拉一次分类列表**，否则拿到的是上一个接口的响应
+    req GET /api/v1/transaction/categories/list.json
+    ICAT="$(pick_sub_cat 1)"
+    req POST /api/v1/accounts/add.json \
+      "{\"name\":\"SMOKE-S12A-$TS\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"currency\":\"CNY\",\"balance\":\"0\",\"comment\":\"smoke 统计主账户\"}"
+    S12A="$(jget "d.get('result',{}).get('id','')")"
+    req POST /api/v1/accounts/add.json \
+      "{\"name\":\"SMOKE-S12B-$TS\",\"category\":1,\"type\":1,\"icon\":\"2\",\"iconType\":0,\"color\":\"2F9E44\",\"currency\":\"CNY\",\"balance\":\"0\",\"comment\":\"smoke 统计转账对手\"}"
+    S12B="$(jget "d.get('result',{}).get('id','')")"
+
+    NOW_T="$(date +%s)"
+    # 统计用的是**客户端时区**（X-Timezone-Name），这里固定按 Asia/Shanghai 算区间
+    read -r MSTART SY SM SD <<< "$(python3 -c "
+from datetime import datetime
+from zoneinfo import ZoneInfo
+tz = ZoneInfo('Asia/Shanghai')
+now = datetime.now(tz)
+start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+print(int(start.timestamp()), now.year, now.month, now.day)
+")"
+
+    req POST /api/v1/transactions/add.json \
+      "{\"type\":3,\"categoryId\":\"$ECAT\",\"time\":$NOW_T,\"utcOffset\":480,\"sourceAccountId\":\"$S12A\",\"destinationAccountId\":\"0\",\"sourceAmount\":1234,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 统计支出\"}"
+    S12E="$(jget "d.get('result',{}).get('id','')")"
+    req POST /api/v1/transactions/add.json \
+      "{\"type\":2,\"categoryId\":\"$ICAT\",\"time\":$NOW_T,\"utcOffset\":480,\"sourceAccountId\":\"$S12A\",\"destinationAccountId\":\"0\",\"sourceAmount\":5678,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 统计收入\"}"
+    S12I="$(jget "d.get('result',{}).get('id','')")"
+    req POST /api/v1/transactions/add.json \
+      "{\"type\":4,\"categoryId\":\"$TCAT\",\"time\":$NOW_T,\"utcOffset\":480,\"sourceAccountId\":\"$S12A\",\"destinationAccountId\":\"$S12B\",\"sourceAmount\":1000,\"destinationAmount\":1000,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 统计转账\"}"
+    S12T="$(jget "d.get('result',{}).get('id','')")"
+
+    if [ -z "$ICAT" ] || [ -z "$S12A" ] || [ -z "$S12B" ] || [ -z "$S12E" ] || [ -z "$S12I" ] || [ -z "$S12T" ]; then
+      record "12. 统计三端点（口径基线）" 1 "前置数据没建全 ICAT=$ICAT A=$S12A B=$S12B E=$S12E I=$S12I T=$S12T"
+    else
+      # 12a. 默认币种（统计汇总前统一换算到它，App statistics_logic.toDefaultCurrency）
+      req GET /api/v1/users/profile/get.json
+      DC="$(jget "d.get('result',{}).get('defaultCurrency','')")"
+      if [ "${#DC}" = 3 ]; then
+        record "12a. 默认币种 GET /users/profile/get.json" 0 "defaultCurrency=$DC"
+      else
+        record "12a. 默认币种 GET /users/profile/get.json" 1 "HTTP $HTTP_CODE defaultCurrency='$DC'"
+      fi
+
+      # 12b. statistics.json：按 (分类, 账户) 分组、金额是**正数**最小单位、
+      #      转账出两项且带 relatedAccountType 1/2
+      req GET "/api/v1/transactions/statistics.json?start_time=$MSTART&end_time=$NOW_T"
+      read -r SE SI SN ST SP <<< "$(python3 -c "
+import json, sys
+try:
+    items = json.load(open('$BODY_FILE'))['result'].get('items', [])
+except Exception:
+    print('- - - - -'); sys.exit()
+mine = [i for i in items if i.get('accountId') in ('$S12A', '$S12B')]
+exp = sum(int(i['amount']) for i in mine if i.get('categoryId') == '$ECAT')
+inc = sum(int(i['amount']) for i in mine if i.get('categoryId') == '$ICAT')
+trs = [i for i in mine if i.get('relatedAccountType') in (1, 2)]
+types = ','.join(str(t) for t in sorted({i['relatedAccountType'] for i in trs})) or '-'
+pos = 'yes' if mine and all(int(i['amount']) > 0 for i in mine) else 'no'
+print(exp, inc, len(trs), types, pos)
+")"
+      if [ "$SE" = 1234 ] && [ "$SI" = 5678 ] && [ "$SN" = 2 ] && [ "$ST" = "1,2" ] && [ "$SP" = yes ]; then
+        record "12b. statistics.json 分类/转账口径" 0 "支出=$SE 收入=$SI 转账项=$SN(对端类型 $ST) 全正数=$SP"
+      else
+        record "12b. statistics.json 分类/转账口径" 1 "exp=$SE inc=$SI trs=$SN types=$ST pos=$SP"
+      fi
+
+      # 12c. trends.json：按年月返回，同一批流水的口径与 statistics.json 一致
+      req GET "/api/v1/transactions/statistics/trends.json?start_year_month=$SY-$(printf '%02d' "$SM")&end_year_month=$SY-$(printf '%02d' "$SM")"
+      read -r TY TM TE TI <<< "$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('$BODY_FILE'))['result']
+except Exception:
+    print('- - - -'); sys.exit()
+if not data:
+    print('- - - -'); sys.exit()
+d = data[0]
+mine = [i for i in d.get('items', []) if i.get('accountId') in ('$S12A', '$S12B')]
+exp = sum(int(i['amount']) for i in mine if i.get('categoryId') == '$ECAT')
+inc = sum(int(i['amount']) for i in mine if i.get('categoryId') == '$ICAT')
+print(d['year'], d['month'], exp, inc)
+")"
+      if [ "$TY" = "$SY" ] && [ "$TM" = "$SM" ] && [ "$TE" = 1234 ] && [ "$TI" = 5678 ]; then
+        record "12c. trends.json 按年月分组" 0 "${TY}-${TM} 支出=$TE 收入=$TI"
+      else
+        record "12c. trends.json 按年月分组" 1 "ym=$TY-$TM exp=$TE inc=$TI（期望 $SY-$SM 1234 5678）"
+      fi
+
+      # 12d. asset_trends.json：余额是**截至当日的全量累计**（带符号），
+      #      3444 = 5678 收入 - 1234 支出 - 1000 转出
+      req GET "/api/v1/transactions/statistics/asset_trends.json?start_time=$MSTART&end_time=$NOW_T"
+      read -r AO AC BC <<< "$(python3 -c "
+import json, sys
+try:
+    days = json.load(open('$BODY_FILE'))['result']
+except Exception:
+    print('- - -'); sys.exit()
+for d in days:
+    if (d['year'], d['month'], d['day']) == ($SY, $SM, $SD):
+        a = next((i for i in d['items'] if i['accountId'] == '$S12A'), None)
+        b = next((i for i in d['items'] if i['accountId'] == '$S12B'), None)
+        if a and b:
+            print(a['accountOpeningBalance'], a['accountClosingBalance'], b['accountClosingBalance'])
+        else:
+            print('- - -')
+        sys.exit()
+print('- - -')
+")"
+      if [ "$AO" = 0 ] && [ "$AC" = 3444 ] && [ "$BC" = 1000 ]; then
+        record "12d. asset_trends.json 逐日余额" 0 "A 开=$AO 收=$AC；B 收=$BC"
+      else
+        record "12d. asset_trends.json 逐日余额" 1 "A 开=$AO 收=$AC B 收=$BC（期望 0 3444 1000）"
+      fi
+    fi
+
+    # 统计用的临时数据删干净（账户随后由 8c 一起清）
+    [ -n "$S12E" ] && req POST /api/v1/transactions/delete.json "{\"id\":\"$S12E\"}"
+    [ -n "$S12I" ] && req POST /api/v1/transactions/delete.json "{\"id\":\"$S12I\"}"
+    [ -n "$S12T" ] && req POST /api/v1/transactions/delete.json "{\"id\":\"$S12T\"}"
+    [ -n "$S12A" ] && req POST /api/v1/accounts/delete.json "{\"id\":\"$S12A\"}"
+    [ -n "$S12B" ] && req POST /api/v1/accounts/delete.json "{\"id\":\"$S12B\"}"
+
     req POST /api/v1/accounts/delete.json "{\"id\":\"$AID\"}"
     ok_json && record "8c. 删账户 POST /accounts/delete.json" 0 "HTTP $HTTP_CODE（数据已还原）" \
             || record "8c. 删账户 POST /accounts/delete.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"

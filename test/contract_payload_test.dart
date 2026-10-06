@@ -9,7 +9,9 @@ import 'package:ebk_mobile/core/storage/token_store.dart';
 import 'package:ebk_mobile/data/repositories/account_repository.dart';
 import 'package:ebk_mobile/data/repositories/category_repository.dart';
 import 'package:ebk_mobile/data/repositories/exchange_rate_repository.dart';
+import 'package:ebk_mobile/data/repositories/statistics_repository.dart';
 import 'package:ebk_mobile/data/repositories/transaction_repository.dart';
+import 'package:ebk_mobile/data/repositories/user_repository.dart';
 
 import 'fakes.dart';
 
@@ -405,6 +407,154 @@ void main() {
       expect(rates.convert(10000, 'CNY', 'EUR'), 1333);
       // 拿不到汇率必须返回 null（表单据此拒绝提交，而不是瞎算）
       expect(rates.convert(10000, 'CNY', 'JPY'), isNull);
+    });
+  });
+
+  group('StatisticsRepository payload（统计三端点）', () {
+    test('overview：秒区间以字符串下发，items 解析成正数最小单位', () async {
+      final adapter = FakeHttpAdapter(
+        (path, body) => ok({
+          'startTime': 1790784000,
+          'endTime': 1791255256,
+          'items': [
+            {
+              'categoryId': '3846579121073160220',
+              'accountId': '3846683640981356544',
+              'amount': '1234',
+            },
+            {
+              'categoryId': '3846579121073160262',
+              'accountId': '3846683640981356544',
+              'relatedAccountId': '3846683640981356545',
+              'relatedAccountType': 2,
+              'amount': '1000',
+            },
+          ],
+        }),
+      );
+      final repo = StatisticsRepository(_clientWith(adapter));
+
+      final overview = await repo.overview(
+        startTime: 1790784000,
+        endTime: 1791255256,
+      );
+
+      final query = adapter
+          .lastCallFor('/transactions/statistics.json')
+          .uri
+          .queryParameters;
+      expect(query['start_time'], '1790784000', reason: 'Unix 秒（字符串下发）');
+      expect(query['end_time'], '1791255256');
+      expect(overview.items, hasLength(2));
+      expect(overview.items.first.amount, 1234, reason: 'amount 是最小单位字符串');
+      expect(overview.items.first.isTransfer, isFalse);
+      expect(overview.items.last.isTransfer, isTrue);
+      expect(
+        overview.items.last.relatedAccountType,
+        2,
+        reason: '2 = 对端是转入方（1 = 对端是转出方）',
+      );
+    });
+
+    test('trends：年月是 2026-01 格式，响应是升序数组', () async {
+      final adapter = FakeHttpAdapter(
+        (path, body) => ok([
+          {
+            'year': 2026,
+            'month': 9,
+            'items': <dynamic>[],
+          },
+          {
+            'year': 2026,
+            'month': 10,
+            'items': [
+              {
+                'categoryId': '201',
+                'accountId': '7',
+                'amount': '5000',
+              },
+            ],
+          },
+        ]),
+      );
+      final repo = StatisticsRepository(_clientWith(adapter));
+
+      final trends = await repo.trends(
+        startYearMonth: '2026-09',
+        endYearMonth: '2026-10',
+      );
+
+      final query = adapter
+          .lastCallFor('/transactions/statistics/trends.json')
+          .uri
+          .queryParameters;
+      expect(query['start_year_month'], '2026-09', reason: '按 - 切的年月串');
+      expect(query['end_year_month'], '2026-10');
+      expect(trends, hasLength(2));
+      expect([trends.last.year, trends.last.month], [2026, 10]);
+      expect(trends.last.items.single.amount, 5000);
+    });
+
+    test('asset_trends：余额是带符号的累计值', () async {
+      final adapter = FakeHttpAdapter(
+        (path, body) => ok([
+          {
+            'year': 2026,
+            'month': 10,
+            'day': 6,
+            'items': [
+              {
+                'accountId': '7',
+                'accountOpeningBalance': '1000',
+                'accountClosingBalance': '-500',
+              },
+              {
+                'accountId': '8',
+                'accountOpeningBalance': '0',
+                'accountClosingBalance': '3444',
+              },
+            ],
+          },
+        ]),
+      );
+      final repo = StatisticsRepository(_clientWith(adapter));
+
+      final days = await repo.assetTrends(startTime: 1, endTime: 2);
+
+      expect(
+        adapter.lastCallFor('/transactions/statistics/asset_trends.json'),
+        isNotNull,
+      );
+      expect(days, hasLength(1));
+      final balances = days.single.balances;
+      expect(balances.first.closingMinor, -500, reason: '负债余额为负（实测信用卡）');
+      expect(balances.last.closingMinor, 3444);
+      expect(days.single.date, DateTime(2026, 10, 6));
+    });
+  });
+
+  group('UserRepository payload（统计要的默认币种）', () {
+    test('profile：GET users/profile/get.json 取 defaultCurrency', () async {
+      final adapter = FakeHttpAdapter(
+        (path, body) => ok({
+          'username': 'admin',
+          'nickname': '管理员',
+          'language': 'zh-CN',
+          'defaultCurrency': 'CNY',
+          'defaultAccountId': '7',
+        }),
+      );
+      final repo = UserRepository(_clientWith(adapter));
+
+      final profile = await repo.profile();
+
+      expect(
+        adapter.lastCallFor('/users/profile/get.json').method,
+        'GET',
+        reason: '只读接口，不能写成 POST',
+      );
+      expect(profile.defaultCurrency, 'CNY');
+      expect(profile.language, 'zh-CN');
     });
   });
 }
