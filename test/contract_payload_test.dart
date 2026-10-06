@@ -1,0 +1,243 @@
+/// 仓库层 **payload 契约测试**：断言真正发出去的 JSON 字段，
+/// 全部对应 `scripts/smoke.sh --crud` 实测踩过的坑（见方案文档 §1）。
+library;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:ebk_mobile/core/network/api_client.dart';
+import 'package:ebk_mobile/core/storage/token_store.dart';
+import 'package:ebk_mobile/data/repositories/account_repository.dart';
+import 'package:ebk_mobile/data/repositories/exchange_rate_repository.dart';
+import 'package:ebk_mobile/data/repositories/transaction_repository.dart';
+
+import 'fakes.dart';
+
+ApiClient _clientWith(FakeHttpAdapter adapter) {
+  final client = ApiClient(
+    baseUrl: 'https://fake.test',
+    tokenStore: TokenStore(),
+  );
+  client.dio.httpClientAdapter = adapter;
+  return client;
+}
+
+void main() {
+  group('TransactionRepository payload', () {
+    test('add 支出：id 全是字符串、金额为正、非转账 destinationAmount=0', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '9'}));
+      final repo = TransactionRepository(_clientWith(adapter));
+
+      await repo.add(const TxDraft(
+        type: 3, // 支出
+        categoryId: '201', // 子分类 id（一级分类会被 206005 拒）
+        time: 1760000000,
+        utcOffset: 480, // 东向为正
+        sourceAccountId: '7',
+        sourceAmount: 1234, // 正的最小单位
+        comment: '午饭',
+      ));
+
+      final call = adapter.lastCallFor('/transactions/add.json');
+      expect(call.method, 'POST');
+      expect(call.body, isNotNull);
+      final body = call.body!;
+      expect(body['type'], 3);
+      expect(body['categoryId'], '201', reason: 'categoryId 必须是字符串化 int64');
+      expect(body['sourceAccountId'], '7');
+      expect(body['destinationAccountId'], '0');
+      expect(body['sourceAmount'], 1234, reason: '支出传正数，服务端自己扣');
+      expect(body['destinationAmount'], 0, reason: '非转账传 0，否则 206004');
+      expect(body['time'], 1760000000);
+      expect(body['utcOffset'], 480);
+      expect(body['tagIds'], isEmpty);
+      expect(body['pictureIds'], isEmpty);
+      expect(body['comment'], '午饭');
+      expect(body['hideAmount'], isFalse);
+    });
+
+    test('modify 比 add 只多一个 id', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '9'}));
+      final repo = TransactionRepository(_clientWith(adapter));
+
+      await repo.modify(
+        id: '9',
+        draft: const TxDraft(
+          type: 4,
+          categoryId: '301',
+          time: 1760000000,
+          utcOffset: -330,
+          sourceAccountId: '7',
+          sourceAmount: 500,
+          destinationAccountId: '8',
+          destinationAmount: 500,
+        ),
+      );
+
+      final body = adapter.lastCallFor('/transactions/modify.json').body!;
+      expect(body['id'], '9');
+      expect(body['type'], 4);
+      expect(body['destinationAccountId'], '8');
+      expect(body['destinationAmount'], 500, reason: '同币种转账两者相等');
+      expect(body['utcOffset'], -330, reason: '西向为负，范围 -720..840');
+    });
+
+    test('delete 只发 {id}', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok(true));
+      final repo = TransactionRepository(_clientWith(adapter));
+
+      await repo.remove('9');
+
+      final call = adapter.lastCallFor('/transactions/delete.json');
+      expect(call.body, {'id': '9'});
+    });
+  });
+
+  group('AccountRepository payload', () {
+    test('新建带初始余额 → 必须同时给 balanceTime（否则 204015）', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '1'}));
+      final repo = AccountRepository(_clientWith(adapter));
+
+      await repo.add(
+        name: '钱包',
+        category: 1,
+        icon: 1,
+        iconType: 0,
+        color: '3B7DD8',
+        currency: 'CNY',
+        balance: 500,
+        comment: '零钱',
+      );
+
+      final body = adapter.lastCallFor('/accounts/add.json').body!;
+      expect(body['name'], '钱包');
+      expect(body['category'], 1);
+      expect(body['type'], 1, reason: 'MVP 只建单账户');
+      expect(body['icon'], '1', reason: 'icon 是字符串化 int64');
+      expect(body['iconType'], 0);
+      expect(body['color'], '3B7DD8', reason: '6 位不带 #');
+      expect(body['currency'], 'CNY');
+      expect(body['balance'], '500');
+      expect(body['balanceTime'], isA<int>());
+      expect(body['balanceTime'] as int, greaterThan(0));
+    });
+
+    test('新建不填余额 → 一个 balance 键都不发（发了就得带 balanceTime）', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '1'}));
+      final repo = AccountRepository(_clientWith(adapter));
+
+      await repo.add(
+        name: '钱包',
+        category: 1,
+        icon: 1,
+        iconType: 0,
+        color: '3B7DD8',
+        currency: 'CNY',
+      );
+
+      final body = adapter.lastCallFor('/accounts/add.json').body!;
+      expect(body.containsKey('balance'), isFalse);
+      expect(body.containsKey('balanceTime'), isFalse);
+    });
+
+    test('编辑绝不带 balance/balanceTime（带了报 204021）', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok(true));
+      final repo = AccountRepository(_clientWith(adapter));
+
+      await repo.modify(
+        id: '1',
+        name: '钱包改名',
+        category: 4,
+        icon: 100,
+        iconType: 0,
+        color: '1F9D55',
+        currency: 'CNY',
+        comment: '备注',
+        hidden: true,
+      );
+
+      final body = adapter.lastCallFor('/accounts/modify.json').body!;
+      expect(body['id'], '1');
+      expect(body['name'], '钱包改名');
+      expect(body['category'], 4);
+      expect(body['currency'], 'CNY');
+      expect(body['hidden'], isTrue);
+      expect(body.containsKey('balance'), isFalse,
+          reason: '服务端见 balance 键就报 not supported to modify account balance');
+      expect(body.containsKey('balanceTime'), isFalse);
+    });
+
+    test('hide 发 {id, hidden}；列表过滤参数是 visible_only', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok([]));
+      final repo = AccountRepository(_clientWith(adapter));
+
+      await repo.hide('1', true);
+      final hideBody = adapter.lastCallFor('/accounts/hide.json').body!;
+      expect(hideBody, {'id': '1', 'hidden': true});
+
+      await repo.list(withHidden: false);
+      final listCall = adapter.lastCallFor('/accounts/list.json');
+      expect(listCall.uri.queryParameters['visible_only'], 'true');
+      expect(listCall.uri.queryParameters.containsKey('with_hidden'), isFalse,
+          reason: 'with_hidden 是无效参数，服务端会忽略');
+    });
+  });
+
+  group('分类列表：按 type 分组的 map 拍平', () {
+    test('subCategories 字段 + map 结构都能解析', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({
+            '2': [
+              {
+                'id': '200',
+                'name': '食品饮料',
+                'type': 2,
+                'parentId': '0',
+                'hidden': false,
+                'subCategories': [
+                  {
+                    'id': '201',
+                    'name': '食品',
+                    'type': 2,
+                    'parentId': '200',
+                    'hidden': false,
+                  },
+                ],
+              },
+            ],
+            '3': [
+              {
+                'id': '300',
+                'name': '一般转账',
+                'type': 3,
+                'parentId': '0',
+                'hidden': false,
+                'subCategories': [],
+              },
+            ],
+          }));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      final categories = await repo.list();
+      // 返回的是一级列表（子分类挂在 children 上，由 Category.flatten 展开）
+      expect(categories.map((c) => c.id), ['200', '300']);
+
+      final parent = categories.firstWhere((c) => c.id == '200');
+      expect(parent.children.single.id, '201');
+      expect(parent.children.single.name, '食品');
+    });
+  });
+
+  group('跨币种换算', () {
+    test('同币种直接原样；跨币种按 rate 比值（基准约掉）', () {
+      const rates = ExchangeRates(
+        baseCurrency: 'EUR',
+        rates: {'EUR': 1.0, 'CNY': 7.5, 'USD': 1.1},
+      );
+
+      expect(rates.convert(1234, 'CNY', 'CNY'), 1234);
+      // 100 元 = 100 / 7.5 欧 ≈ 13.33 欧 → 1333 分
+      expect(rates.convert(10000, 'CNY', 'EUR'), 1333);
+      // 拿不到汇率必须返回 null（表单据此拒绝提交，而不是瞎算）
+      expect(rates.convert(10000, 'CNY', 'JPY'), isNull);
+    });
+  });
+}

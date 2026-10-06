@@ -6,11 +6,12 @@ import '../../core/network/api_client.dart';
 ///
 /// `GET /api/v1/exchange_rates/latest.json` →
 /// ```json
-/// { "dataSource": "...", "baseCurrency": "CNY",
-///   "exchangeRates": [ {"currency":"USD","rate":"7.12"}, ... ] }
+/// { "dataSource": "European Central Bank", "baseCurrency": "EUR",
+///   "exchangeRates": [ {"currency":"CNY","rate":"7.51"}, ... ] }
 /// ```
-/// rate 的语义是"1 单位该货币 = rate 个基准货币"。
-/// 换算时基准会约掉：`目标金额 = 源金额 × rate源 / rate目标`。
+/// rate 的语义是 **1 单位基准货币 = rate 个该货币**（ECB 报价，基准 EUR）。
+/// 换算式与网页端 `lib/numeral.ts: getExchangedAmountByRate` 完全一致：
+/// `目标金额 = 源金额 × rate目标 / rate源`（基准在比值里约掉，不必知道 base）。
 class ExchangeRate {
   const ExchangeRate({required this.currency, required this.rate});
 
@@ -32,7 +33,7 @@ class ExchangeRates {
     if (fromRate == null || toRate == null || fromRate <= 0 || toRate <= 0) {
       return null;
     }
-    final converted = minorAmount * fromRate / toRate;
+    final converted = minorAmount * toRate / fromRate;
     // 最小单位不能是小数，四舍五入
     final rounded = converted.round();
     return rounded;
