@@ -16,6 +16,7 @@ class SettingsScreen extends ConsumerWidget {
     final serverUrl = ref.watch(serverUrlProvider);
     final versionAsync = ref.watch(versionProvider);
     final themeMode = ref.watch(themeModeProvider);
+    final eyeCare = ref.watch(eyeCareProvider);
     final theme = Theme.of(context);
 
     // 先改内存再落盘：交互立刻生效；落盘失败也不能打断本次会话
@@ -25,6 +26,15 @@ class SettingsScreen extends ConsumerWidget {
         await ref.read(preferencesStoreProvider).setThemeMode(mode);
       } catch (_) {
         // 存储不可用时保持内存里的值即可，下次启动回到默认主题
+      }
+    }
+
+    Future<void> changeEyeCare(bool value) async {
+      ref.read(eyeCareProvider.notifier).state = value;
+      try {
+        await ref.read(preferencesStoreProvider).setEyeCare(value);
+      } catch (_) {
+        // 同上
       }
     }
 
@@ -70,6 +80,14 @@ class SettingsScreen extends ConsumerWidget {
               selected: {themeMode},
               onSelectionChanged: (selection) => changeTheme(selection.first),
             ),
+          ),
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+            secondary: const Icon(Icons.wb_sunny_outlined),
+            title: const Text('护眼模式'),
+            subtitle: const Text('暖色底 + 暖色字，降低蓝光；在上面的浅色/深色之上叠加'),
+            value: eyeCare,
+            onChanged: changeEyeCare,
           ),
           const Divider(),
           const _Header(title: '数据'),

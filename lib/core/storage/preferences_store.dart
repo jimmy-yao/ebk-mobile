@@ -4,7 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// 通用偏好存储。
 ///
-/// 存的是**非敏感**项（目前只有主题模式），但复用 token 已经在用的
+/// 存的是**非敏感**项（主题模式、护眼模式），但复用 token 已经在用的
 /// `flutter_secure_storage`（Android Keystore / iOS Keychain），
 /// 免得多引一个 shared_preferences。
 ///
@@ -22,17 +22,33 @@ class PreferencesStore {
   final FlutterSecureStorage? _storage;
 
   static const String _themeModeKey = 'theme_mode';
+  static const String _eyeCareKey = 'eye_care';
+
+  /// 新增偏好项：这里加一个键 + 一对 getter/setter 即可
+  static const List<String> _keys = <String>[_themeModeKey, _eyeCareKey];
 
   final Map<String, String> _cache = <String, String>{};
 
-  /// 启动时读一次。新键在这里加一行即可
+  /// 启动时读一次，之后就能同步读
   Future<void> init() async {
     final storage = _storage;
     if (storage == null) return;
-    final value = await storage.read(key: _themeModeKey);
-    if (value != null) {
-      _cache[_themeModeKey] = value;
+    for (final key in _keys) {
+      final value = await storage.read(key: key);
+      if (value != null) {
+        _cache[key] = value;
+      }
     }
+  }
+
+  /// 护眼模式（暖色调，默认关）
+  bool get eyeCare => _cache[_eyeCareKey] == 'true';
+
+  Future<void> setEyeCare(bool value) async {
+    _cache[_eyeCareKey] = value ? 'true' : 'false';
+    final storage = _storage;
+    if (storage == null) return;
+    await storage.write(key: _eyeCareKey, value: _cache[_eyeCareKey]!);
   }
 
   /// 主题模式（默认跟随系统）
