@@ -20,10 +20,32 @@ class ExchangeRate {
 }
 
 class ExchangeRates {
-  const ExchangeRates({required this.baseCurrency, required this.rates});
+  const ExchangeRates({
+    required this.baseCurrency,
+    required this.rates,
+    this.dataSource = '',
+    this.referenceUrl = '',
+    this.updateTime = 0,
+  });
 
   final String baseCurrency;
   final Map<String, double> rates;
+
+  /// 数据来源（实测 `European Central Bank`；服务端配成自定义源时是 `user_custom`）
+  final String dataSource;
+  final String referenceUrl;
+
+  /// 服务端拿到这份汇率的时间（Unix 秒）
+  final int updateTime;
+
+  /// 按币种码升序的条目（汇率页展示用）。基准币种自己也在里面（rate=1）
+  List<ExchangeRate> get entries {
+    final list = [
+      for (final e in rates.entries)
+        ExchangeRate(currency: e.key, rate: e.value),
+    ];
+    return list..sort((a, b) => a.currency.compareTo(b.currency));
+  }
 
   /// 从 [from] 币种换到 [to] 币种；拿不到汇率返回 null
   int? convert(int minorAmount, String from, String to) {
@@ -54,5 +76,8 @@ final exchangeRatesProvider = FutureProvider.autoDispose<ExchangeRates>((ref) as
   return ExchangeRates(
     baseCurrency: map['baseCurrency']?.toString() ?? '',
     rates: rates,
+    dataSource: map['dataSource']?.toString() ?? '',
+    referenceUrl: map['referenceUrl']?.toString() ?? '',
+    updateTime: int.tryParse(map['updateTime']?.toString() ?? '') ?? 0,
   );
 });

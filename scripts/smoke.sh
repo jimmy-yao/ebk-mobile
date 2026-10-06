@@ -144,6 +144,25 @@ check "3g. 统计 GET /api/v1/transactions/statistics.json"          "/api/v1/tr
 check "3h. 趋势 GET /api/v1/transactions/statistics/trends.json"   "/api/v1/transactions/statistics/trends.json"
 check "3i. 资产趋势 GET /api/v1/transactions/statistics/asset_trends.json" "/api/v1/transactions/statistics/asset_trends.json"
 check "3j. 汇率 GET /api/v1/exchange_rates/latest.json"            "/api/v1/exchange_rates/latest.json"
+# 3j 的字段契约：汇率页与跨币种汇总都靠这几项（base 缺 → 换算全跳过）
+req GET /api/v1/exchange_rates/latest.json
+read -r EX_BASE EX_SRC EX_N EX_T <<<"$(python3 -c "
+import json
+try:
+    r = json.load(open('$BODY_FILE'))['result']
+    print(r.get('baseCurrency') or '-',
+          (r.get('dataSource') or '-').replace(' ', '_'),
+          len(r.get('exchangeRates') or []),
+          r.get('updateTime') or 0)
+except Exception:
+    print('- - 0 0')
+")"
+if [[ "$EX_BASE" =~ ^[A-Za-z]{3}$ && "$EX_N" =~ ^[0-9]+$ && "$EX_N" -gt 0 \
+      && "$EX_T" =~ ^[0-9]+$ && "$EX_T" -gt 0 ]]; then
+  record "3j2. 汇率字段契约(base/source/条数/更新时间)" 0 "base=$EX_BASE source=$EX_SRC 条数=$EX_N updateTime=$EX_T"
+else
+  record "3j2. 汇率字段契约(base/source/条数/更新时间)" 1 "base=$EX_BASE source=$EX_SRC 条数=$EX_N updateTime=$EX_T"
+fi
 check "3k. 数据统计 GET /api/v1/data/statistics.json"              "/api/v1/data/statistics.json"
 check "3l. 版本 GET /api/v1/systems/version.json"                  "/api/v1/systems/version.json"
 

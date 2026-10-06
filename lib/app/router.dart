@@ -6,6 +6,7 @@ import '../features/accounts/account_edit_screen.dart';
 import '../features/accounts/accounts_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/categories/categories_screen.dart';
+import '../features/exchange_rates/exchange_rates_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/app_shell.dart';
@@ -51,6 +52,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/statistics',
         builder: (context, state) => const StatisticsScreen(),
+      ),
+      // 汇率页（从设置进入）
+      GoRoute(
+        path: '/exchange_rates',
+        builder: (context, state) => const ExchangeRatesScreen(),
       ),
       GoRoute(
         path: '/accounts/:id/edit',

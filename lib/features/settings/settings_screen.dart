@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/theme.dart';
 import '../../core/network/api_client.dart';
+import '../../core/storage/preferences_store.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/version_repository.dart';
 
@@ -13,7 +15,18 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final serverUrl = ref.watch(serverUrlProvider);
     final versionAsync = ref.watch(versionProvider);
+    final themeMode = ref.watch(themeModeProvider);
     final theme = Theme.of(context);
+
+    // 先改内存再落盘：交互立刻生效；落盘失败也不能打断本次会话
+    Future<void> changeTheme(ThemeMode mode) async {
+      ref.read(themeModeProvider.notifier).state = mode;
+      try {
+        await ref.read(preferencesStoreProvider).setThemeMode(mode);
+      } catch (_) {
+        // 存储不可用时保持内存里的值即可，下次启动回到默认主题
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -44,6 +57,21 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const Divider(),
+          const _Header(title: '外观'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: SegmentedButton<ThemeMode>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: ThemeMode.system, label: Text('跟随系统')),
+                ButtonSegment(value: ThemeMode.light, label: Text('浅色')),
+                ButtonSegment(value: ThemeMode.dark, label: Text('深色')),
+              ],
+              selected: {themeMode},
+              onSelectionChanged: (selection) => changeTheme(selection.first),
+            ),
+          ),
+          const Divider(),
           const _Header(title: '数据'),
           ListTile(
             leading: const Icon(Icons.category_outlined),
@@ -58,6 +86,13 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: const Text('标签的新增、改名、隐藏、删除'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push('/tags'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.currency_exchange),
+            title: const Text('汇率'),
+            subtitle: const Text('基准货币、数据来源与换算小工具'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/exchange_rates'),
           ),
           const Divider(),
           const _Header(title: '应用'),

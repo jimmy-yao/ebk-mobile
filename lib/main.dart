@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
+import 'core/storage/preferences_store.dart';
 import 'core/storage/token_store.dart';
 
 Future<void> main() async {
@@ -12,9 +13,16 @@ Future<void> main() async {
   final tokenStore = TokenStore();
   await tokenStore.init();
 
+  // 主题偏好同理：首帧前同步读好，否则会先闪一下默认主题
+  final preferences = PreferencesStore();
+  await preferences.init();
+
   runApp(
     ProviderScope(
-      overrides: [tokenStoreProvider.overrideWithValue(tokenStore)],
+      overrides: [
+        tokenStoreProvider.overrideWithValue(tokenStore),
+        preferencesStoreProvider.overrideWithValue(preferences),
+      ],
       child: const EbkApp(),
     ),
   );
