@@ -243,6 +243,66 @@ if [ "$RUN_CRUD" = 1 ]; then
     ok_json && record "8b. 改账户 POST /accounts/modify.json" 0 "HTTP $HTTP_CODE" \
             || record "8b. 改账户 POST /accounts/modify.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
 
+    # ---- 8d. 编辑时**不能**带 balance（AccountModifyRequest 一见该键就拒）----
+    req POST /api/v1/accounts/modify.json \
+      "{\"id\":\"$AID\",\"name\":\"$NAME-mod\",\"category\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"balance\":\"0\"}"
+    MSG="$(jget "d.get('errorMessage','')")"
+    if ! ok_json && [ "$MSG" = "not supported to modify account balance" ]; then
+      record "8d. 改账户带 balance 应被拒" 0 "errorCode=$(jget "d.get('errorCode','')") $MSG"
+    else
+      record "8d. 改账户带 balance 应被拒" 1 "HTTP $HTTP_CODE $MSG"
+    fi
+
+    # ---- 8e. 新建带初始余额但缺 balanceTime → 应被拒 ----
+    req POST /api/v1/accounts/add.json \
+      "{\"name\":\"SMOKE-BAL-$TS\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"currency\":\"CNY\",\"balance\":\"500\",\"comment\":\"smoke 余额\"}"
+    MSG="$(jget "d.get('errorMessage','')")"
+    if ! ok_json && [ "$MSG" = "account balance time is not set" ]; then
+      record "8e. 初始余额缺 balanceTime 应被拒" 0 "$MSG"
+    else
+      record "8e. 初始余额缺 balanceTime 应被拒" 1 "HTTP $HTTP_CODE $MSG"
+    fi
+
+    # ---- 8f. 补上 balanceTime → 建成，balance=500，用完即删 ----
+    req POST /api/v1/accounts/add.json \
+      "{\"name\":\"SMOKE-BAL-$TS\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"currency\":\"CNY\",\"balance\":\"500\",\"balanceTime\":$(date +%s),\"comment\":\"smoke 余额\"}"
+    BALID="$(jget "d.get('result',{}).get('id','')")"
+    if [ -n "$BALID" ]; then
+      req GET /api/v1/accounts/list.json
+      GOTBAL="$(python3 -c "
+import json, sys
+for a in json.load(open('$BODY_FILE'))['result']:
+    if a['id'] == '$BALID':
+        print(a['balance']); sys.exit()
+print('NOTFOUND')
+")"
+      req POST /api/v1/accounts/delete.json "{\"id\":\"$BALID\"}"
+      if [ "$GOTBAL" = "500" ] && ok_json; then
+        record "8f. 初始余额+balanceTime" 0 "balance=$GOTBAL（最小单位），用完已删"
+      else
+        record "8f. 初始余额+balanceTime" 1 "balance=$GOTBAL delete=$(jget "d.get('errorMessage','')")"
+      fi
+    else
+      record "8f. 初始余额+balanceTime" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+    fi
+
+    # ---- 8g. hide.json：隐藏后 visible_only=true 的列表里看不到 ----
+    req POST /api/v1/accounts/hide.json "{\"id\":\"$AID\",\"hidden\":true}"
+    HIDE_OK=0; ok_json && HIDE_OK=1
+    req GET "/api/v1/accounts/list.json?visible_only=true"
+    HIDDEN_GONE="$(python3 -c "
+import json, sys
+ids = [a['id'] for a in json.load(open('$BODY_FILE'))['result']]
+print('yes' if '$AID' not in ids else 'no')
+")"
+    req POST /api/v1/accounts/hide.json "{\"id\":\"$AID\",\"hidden\":false}"
+    UNHIDE_OK=0; ok_json && UNHIDE_OK=1
+    if [ "$HIDE_OK" = 1 ] && [ "$HIDDEN_GONE" = "yes" ] && [ "$UNHIDE_OK" = 1 ]; then
+      record "8g. 隐藏/取消隐藏 accounts/hide.json" 0 "visible_only=true 时不可见，已恢复"
+    else
+      record "8g. 隐藏/取消隐藏 accounts/hide.json" 1 "hide=$HIDE_OK hidden_gone=$HIDDEN_GONE unhide=$UNHIDE_OK"
+    fi
+
     # ---------- 9. 明细写通路（payload 与 App 记账表单 TxDraft 逐字段一致） ----------
     # 实测契约：
     #   * categoryId 必须是**子分类**：一级分类 → 206005、空串 → 200000、type 不符 → 206002

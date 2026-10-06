@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/util/money.dart';
 import '../../data/dto/account_dto.dart';
 import '../../data/repositories/account_repository.dart';
+import 'account_options.dart';
 
 /// 账户列表（含余额）
 final accountsProvider = FutureProvider.autoDispose((ref) async {
@@ -27,7 +29,7 @@ class AccountsScreen extends ConsumerWidget {
         ),
         data: (accounts) {
           if (accounts.isEmpty) {
-            return const Center(child: Text('还没有账户，去网页端先建一个'));
+            return const Center(child: Text('还没有账户，点右下角 ＋ 新建一个'));
           }
           final assets = accounts.where((a) => a.isAsset).toList();
           final liabilities = accounts.where((a) => !a.isAsset).toList();
@@ -49,6 +51,10 @@ class AccountsScreen extends ConsumerWidget {
             ),
           );
         },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => context.push('/accounts/new'),
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -80,18 +86,17 @@ class _AccountTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorHex = account.color.replaceFirst('#', '');
-    final color = _safeColor(colorHex);
+    final color = accountColorOf(account.color);
     final theme = Theme.of(context);
 
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: color.withValues(alpha: 0.18),
-        child: Icon(Icons.account_balance_wallet_outlined, color: color),
+        child: Icon(accountIconOf(account.icon).icon, color: color),
       ),
       title: Text(account.name),
       subtitle: Text(
-        account.currency,
+        account.hidden ? '${account.currency} · 已隐藏' : account.currency,
         style: theme.textTheme.bodySmall,
       ),
       trailing: Column(
@@ -111,16 +116,8 @@ class _AccountTile extends StatelessWidget {
             ),
         ],
       ),
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${account.name} 的编辑页在 Phase 1 第 3 周实现')),
-      ),
+      onTap: () => context.push('/accounts/${account.id}/edit'),
     );
-  }
-
-  static Color _safeColor(String hex) {
-    if (hex.length != 6) return const Color(0xFF3B7DD8);
-    final value = int.tryParse(hex, radix: 16);
-    return value == null ? const Color(0xFF3B7DD8) : Color(0xFF000000 | value);
   }
 }
 

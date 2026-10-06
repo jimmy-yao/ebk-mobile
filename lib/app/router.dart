@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/storage/token_store.dart';
+import '../features/accounts/account_edit_screen.dart';
 import '../features/accounts/accounts_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/home/home_screen.dart';
@@ -29,6 +30,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/accounts/new',
+        builder: (context, state) => const AccountEditScreen(),
+      ),
+      GoRoute(
+        path: '/accounts/:id/edit',
+        builder: (context, state) => AccountEditScreen(
+          accountId: state.pathParameters['id'],
+        ),
       ),
       // 记账表单全屏压在底部导航之上（新建 / 编辑）
       GoRoute(
