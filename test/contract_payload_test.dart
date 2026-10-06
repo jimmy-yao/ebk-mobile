@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ebk_mobile/core/network/api_client.dart';
 import 'package:ebk_mobile/core/storage/token_store.dart';
 import 'package:ebk_mobile/data/repositories/account_repository.dart';
+import 'package:ebk_mobile/data/repositories/category_repository.dart';
 import 'package:ebk_mobile/data/repositories/exchange_rate_repository.dart';
 import 'package:ebk_mobile/data/repositories/transaction_repository.dart';
 
@@ -179,6 +180,125 @@ void main() {
       expect(listCall.uri.queryParameters['visible_only'], 'true');
       expect(listCall.uri.queryParameters.containsKey('with_hidden'), isFalse,
           reason: 'with_hidden 是无效参数，服务端会忽略');
+    });
+  });
+
+  group('CategoryRepository payload（分类）', () {
+    test('新建：icon/parentId 字符串化、带 type，且**不带 hidden**', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '200'}));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.addCategory(
+        name: '房租水电',
+        type: 2,
+        parentId: '0',
+        icon: 200,
+        color: '3B7DD8',
+        comment: '每月固定',
+      );
+
+      final body = adapter.lastCallFor('/categories/add.json').body!;
+      expect(body['name'], '房租水电');
+      expect(body['type'], 2, reason: '类型必须显式给（required，0 会被拒）');
+      expect(body['parentId'], '0', reason: 'json:",string" → 必须是字符串');
+      expect(body['icon'], '200', reason: '同上，发数字会 400');
+      expect(body['iconType'], 0);
+      expect(body['color'], '3B7DD8');
+      expect(body['comment'], '每月固定');
+      expect(body.containsKey('hidden'), isFalse,
+          reason: '创建请求没有 hidden 字段，新分类一定可见');
+      expect(body.containsKey('type') && body.containsKey('id'), isFalse);
+    });
+
+    test('二级分类：parentId 指向一级 id', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '201'}));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.addCategory(
+        name: '物业费',
+        type: 2,
+        parentId: '200',
+        icon: 210,
+        color: '2F9E44',
+      );
+
+      final body = adapter.lastCallFor('/categories/add.json').body!;
+      expect(body['parentId'], '200');
+      expect(body['type'], 2, reason: '子分类类型必须与父分类一致（206002）');
+    });
+
+    test('修改：**没有 type 键**，parentId 原样回传（层级不可改）', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok(true));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.modifyCategory(
+        id: '201',
+        name: '房租水电（改）',
+        parentId: '200',
+        icon: 210,
+        color: '2F9E44',
+        comment: '备注',
+        hidden: true,
+      );
+
+      final body = adapter.lastCallFor('/categories/modify.json').body!;
+      expect(body['id'], '201');
+      expect(body['name'], '房租水电（改）');
+      expect(body['parentId'], '200');
+      expect(body['hidden'], isTrue);
+      expect(body.containsKey('type'), isFalse,
+          reason: 'TransactionCategoryModifyRequest 没有 type 字段');
+      expect(body['icon'], '210');
+      expect(body['color'], '2F9E44');
+    });
+
+    test('hide 与 delete 的请求体', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok(true));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.hideCategory('201', true);
+      expect(adapter.lastCallFor('/categories/hide.json').body,
+          {'id': '201', 'hidden': true});
+
+      await repo.removeCategory('200');
+      final del = adapter.lastCallFor('/categories/delete.json').body!;
+      expect(del, {'id': '200'});
+      expect(del.containsKey('withChildren'), isFalse,
+          reason: '子分类是服务端连带软删的，请求体只有 id');
+    });
+  });
+
+  group('标签 payload（CategoryRepository 内的 tag 方法）', () {
+    test('新建标签只有 groupId + name，**没有 color**', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok({'id': '7'}));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.addTag(name: '日常');
+
+      final body = adapter.lastCallFor('/tags/add.json').body!;
+      expect(body, {'groupId': '0', 'name': '日常'});
+    });
+
+    test('改名带 id + 原 groupId', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok(true));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.modifyTag(id: '7', name: '旅行', groupId: '0');
+
+      expect(adapter.lastCallFor('/tags/modify.json').body,
+          {'id': '7', 'groupId': '0', 'name': '旅行'});
+    });
+
+    test('hide / delete 只发 id（hide 多一个 hidden）', () async {
+      final adapter = FakeHttpAdapter((path, body) => ok(true));
+      final repo = CategoryRepository(_clientWith(adapter));
+
+      await repo.hideTag('7', true);
+      expect(adapter.lastCallFor('/tags/hide.json').body,
+          {'id': '7', 'hidden': true});
+
+      await repo.removeTag('7');
+      expect(adapter.lastCallFor('/tags/delete.json').body, {'id': '7'});
     });
   });
 

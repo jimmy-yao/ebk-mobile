@@ -5,9 +5,11 @@ import '../core/storage/token_store.dart';
 import '../features/accounts/account_edit_screen.dart';
 import '../features/accounts/accounts_screen.dart';
 import '../features/auth/login_screen.dart';
+import '../features/categories/categories_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/app_shell.dart';
+import '../features/tags/tags_screen.dart';
 import '../features/transactions/transaction_edit_screen.dart';
 import '../features/transactions/transactions_screen.dart';
 
@@ -34,6 +36,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/accounts/new',
         builder: (context, state) => const AccountEditScreen(),
+      ),
+      // 分类/标签管理（从设置页进入，全屏压在底部导航之上）
+      GoRoute(
+        path: '/categories',
+        builder: (context, state) => const CategoriesScreen(),
+      ),
+      GoRoute(
+        path: '/tags',
+        builder: (context, state) => const TagsScreen(),
       ),
       GoRoute(
         path: '/accounts/:id/edit',

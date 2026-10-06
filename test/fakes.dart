@@ -77,9 +77,12 @@ class FakeHttpAdapter implements HttpClientAdapter {
     ));
 
     final response = handler(path, body);
+    // 服务端失败形态：`{success:false, errorCode, errorMessage}` + HTTP 4xx，
+    // 假 adapter 照做，才能测到 AppException → 对话框内联报错这条链路
+    final status = response['success'] == false ? 400 : 200;
     return ResponseBody.fromString(
       jsonEncode(response),
-      200,
+      status,
       headers: {
         Headers.contentTypeHeader: [Headers.jsonContentType],
       },

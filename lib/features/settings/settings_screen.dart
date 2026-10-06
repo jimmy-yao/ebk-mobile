@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/network/api_client.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -41,6 +42,22 @@ class SettingsScreen extends ConsumerWidget {
                 info.upToDate ? '已是最新版本' : '有新版本 ${info.latestVersion}',
               ),
             ),
+          ),
+          const Divider(),
+          const _Header(title: '数据'),
+          ListTile(
+            leading: const Icon(Icons.category_outlined),
+            title: const Text('分类管理'),
+            subtitle: const Text('一级/二级分类的新增、改名、隐藏、删除'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/categories'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.label_outline),
+            title: const Text('标签管理'),
+            subtitle: const Text('标签的新增、改名、隐藏、删除'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/tags'),
           ),
           const Divider(),
           const _Header(title: '应用'),

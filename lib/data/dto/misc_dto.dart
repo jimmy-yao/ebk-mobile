@@ -13,6 +13,9 @@ class Category {
     required this.hidden,
     required this.parentId,
     required this.children,
+    this.comment = '',
+    this.iconType = 0,
+    this.displayOrder = 0,
   });
 
   final String id;
@@ -24,6 +27,14 @@ class Category {
   final bool hidden;
   final String parentId;
   final List<Category> children;
+  final String comment;
+
+  /// 0 = 预置图标，1 = 用户自定义图标
+  final int iconType;
+  final int displayOrder;
+
+  /// 是否一级分类（`parentId == "0"`）。服务端只有两级
+  bool get isPrimary => parentId == '0';
 
   factory Category.fromJson(Map<String, dynamic> json) => Category(
         id: json['id']?.toString() ?? '',
@@ -35,6 +46,10 @@ class Category {
             : (json['icon'] is int ? json['icon'] as int : 0),
         hidden: json['hidden'] == true,
         parentId: json['parentId']?.toString() ?? '0',
+        comment: json['comment']?.toString() ?? '',
+        iconType: json['iconType'] is int ? json['iconType'] as int : 0,
+        displayOrder:
+            json['displayOrder'] is int ? json['displayOrder'] as int : 0,
         // 服务端字段名是 subCategories（TransactionCategoryInfoResponse）
         children: (json['subCategories'] as List<dynamic>?)
                 ?.whereType<Map<String, dynamic>>()
@@ -63,23 +78,27 @@ class Tag {
   const Tag({
     required this.id,
     required this.name,
-    required this.color,
-    required this.visible,
-    this.count,
+    required this.groupId,
+    required this.hidden,
+    this.displayOrder = 0,
   });
 
   final String id;
   final String name;
-  final String color;
-  final bool visible;
-  final int? count;
+
+  /// 标签组 id（`"0"` = 未分组）。响应字段是 `groupId`
+  final String groupId;
+
+  final bool hidden;
+  final int displayOrder;
 
   factory Tag.fromJson(Map<String, dynamic> json) => Tag(
         id: json['id']?.toString() ?? '',
         name: json['name']?.toString() ?? '',
-        color: json['color']?.toString() ?? '',
-        visible: json['visible'] != false,
-        count: json['count'] is int ? json['count'] as int : null,
+        groupId: json['groupId']?.toString() ?? '0',
+        hidden: json['hidden'] == true,
+        displayOrder:
+            json['displayOrder'] is int ? json['displayOrder'] as int : 0,
       );
 }
 

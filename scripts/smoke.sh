@@ -429,9 +429,180 @@ print('NOTFOUND')
       fi
     fi
 
+    # ---------- 10. 分类 & 标签写契约（自建自删，跑完数据还原） ----------
+    # 源码契约（pkg/api/transaction_categories.go）：
+    #   * 只有两级：parentId 指向二级 → 206004 cannot add to secondary ...
+    #   * modify 请求**没有 type 字段**；层级不可改（一级挂到二级 → 206007
+    #     not allow to change primary category to secondary category）
+    #   * 删除一级会连子分类一起软删；被明细引用 → 206006
+    cat_in_list() { # cat_in_list <category_id> -> yes/no
+      req GET /api/v1/transaction/categories/list.json
+      python3 -c "
+import json, sys
+d = json.load(open('$BODY_FILE'))['result']
+ids = set()
+for group in d.values():
+    for p in group:
+        ids.add(p['id'])
+        for c in p.get('subCategories', []):
+            ids.add(c['id'])
+print('yes' if '$1' in ids else 'no')
+"
+    }
+
+    # 10a. 新建一级分类
+    req POST /api/v1/transaction/categories/add.json \
+      "{\"name\":\"SMOKE-一级-$TS\",\"type\":2,\"parentId\":\"0\",\"icon\":\"200\",\"iconType\":0,\"color\":\"E8A33D\",\"comment\":\"smoke\"}"
+    CAT1="$(jget "d.get('result',{}).get('id','')")"
+    if [ -n "$CAT1" ]; then
+      record "10a. 建一级分类 categories/add.json" 0 "id=$CAT1（icon/parentId 均为字符串）"
+    else
+      record "10a. 建一级分类 categories/add.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+      CAT1=""
+    fi
+
+    # 10b. 新建二级分类（parentId = 一级 id）
+    if [ -n "$CAT1" ]; then
+      req POST /api/v1/transaction/categories/add.json \
+        "{\"name\":\"SMOKE-二级-$TS\",\"type\":2,\"parentId\":\"$CAT1\",\"icon\":\"210\",\"iconType\":0,\"color\":\"2F9E44\"}"
+      CAT2="$(jget "d.get('result',{}).get('id','')")"
+      if [ -n "$CAT2" ]; then
+        record "10b. 建二级分类 parentId=一级" 0 "id=$CAT2"
+      else
+        record "10b. 建二级分类 parentId=一级" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+        CAT2=""
+      fi
+    else
+      CAT2=""
+      record "10b. 建二级分类 parentId=一级" -1 "10a 没建成"
+    fi
+
+    # 10c. 三级分类必须被拒
+    if [ -n "$CAT2" ]; then
+      req POST /api/v1/transaction/categories/add.json \
+        "{\"name\":\"SMOKE-三级-$TS\",\"type\":2,\"parentId\":\"$CAT2\",\"icon\":\"300\",\"iconType\":0,\"color\":\"3B7DD8\"}"
+      MSG="$(jget "d.get('errorMessage','')")"
+      if ! ok_json && [ "$MSG" = "cannot add to secondary transaction category" ]; then
+        record "10c. 三级分类应被拒" 0 "$MSG"
+      else
+        record "10c. 三级分类应被拒" 1 "HTTP $HTTP_CODE $MSG"
+      fi
+    else
+      record "10c. 三级分类应被拒" -1 "10b 没建成"
+    fi
+
+    # 10d. 改层级：把一级挂到二级下面 → 应被拒
+    if [ -n "$CAT1" ] && [ -n "$CAT2" ]; then
+      req POST /api/v1/transaction/categories/modify.json \
+        "{\"id\":\"$CAT1\",\"name\":\"SMOKE-一级-$TS\",\"parentId\":\"$CAT2\",\"icon\":\"200\",\"iconType\":0,\"color\":\"E8A33D\",\"comment\":\"\"}"
+      MSG="$(jget "d.get('errorMessage','')")"
+      if ! ok_json && [ "$MSG" = "not allow to change primary category to secondary category" ]; then
+        record "10d. 一级改挂到二级应被拒" 0 "$MSG"
+      else
+        record "10d. 一级改挂到二级应被拒" 1 "HTTP $HTTP_CODE $MSG"
+      fi
+    else
+      record "10d. 一级改挂到二级应被拒" -1 "前置未建成"
+    fi
+
+    # 10e. 正常改名（modify 请求体**不带 type**，类型不可改）
+    if [ -n "$CAT1" ]; then
+      req POST /api/v1/transaction/categories/modify.json \
+        "{\"id\":\"$CAT1\",\"name\":\"SMOKE-改名-$TS\",\"parentId\":\"0\",\"icon\":\"200\",\"iconType\":0,\"color\":\"E8A33D\",\"comment\":\"smoke 改\"}"
+      NEW_NAME="$(jget "d.get('result',{}).get('name','')")"
+      if ok_json && [ "$NEW_NAME" = "SMOKE-改名-$TS" ]; then
+        record "10e. 改名 categories/modify.json" 0 "name=$NEW_NAME"
+      else
+        record "10e. 改名 categories/modify.json" 1 "HTTP $HTTP_CODE name=$NEW_NAME $(jget "d.get('errorMessage','')")"
+      fi
+    else
+      record "10e. 改名 categories/modify.json" -1 "10a 没建成"
+    fi
+
+    # 10f/10g. 被明细引用的分类删不掉；删掉明细后才删得掉，账户余额随之复原
+    CAT3=""
+    if [ -n "$CAT1" ]; then
+      req POST /api/v1/transaction/categories/add.json \
+        "{\"name\":\"SMOKE-被引用-$TS\",\"type\":2,\"parentId\":\"$CAT1\",\"icon\":\"310\",\"iconType\":0,\"color\":\"16A2AE\"}"
+      CAT3="$(jget "d.get('result',{}).get('id','')")"
+    fi
+    TX3=""
+    if [ -n "$CAT3" ]; then
+      req POST /api/v1/transactions/add.json \
+        "{\"type\":3,\"categoryId\":\"$CAT3\",\"time\":$(date +%s),\"utcOffset\":480,\"sourceAccountId\":\"$AID\",\"destinationAccountId\":\"0\",\"sourceAmount\":100,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 引用分类\"}"
+      TX3="$(jget "d.get('result',{}).get('id','')")"
+
+      req POST /api/v1/transaction/categories/delete.json "{\"id\":\"$CAT3\"}"
+      MSG="$(jget "d.get('errorMessage','')")"
+      if ! ok_json && [ "$MSG" = "transaction category is in use and cannot be deleted" ]; then
+        record "10f. 被引用分类删除应被拒" 0 "$MSG"
+      else
+        record "10f. 被引用分类删除应被拒" 1 "HTTP $HTTP_CODE $MSG"
+      fi
+
+      [ -n "$TX3" ] && req POST /api/v1/transactions/delete.json "{\"id\":\"$TX3\"}"
+      req POST /api/v1/transaction/categories/delete.json "{\"id\":\"$CAT3\"}"
+      DEL_OK=0; ok_json && DEL_OK=1
+      GONE="$(cat_in_list "$CAT3")"
+      BAL_BACK="$(acct_bal "$AID")"
+      if [ "$DEL_OK" = 1 ] && [ "$GONE" = "no" ] && [ "$BAL_BACK" = "0" ]; then
+        record "10g. 删分类 + 余额复原" 0 "列表已查不到，balance=$BAL_BACK"
+      else
+        record "10g. 删分类 + 余额复原" 1 "del=$DEL_OK gone=$GONE balance=$BAL_BACK"
+      fi
+    else
+      record "10f. 被引用分类删除应被拒" -1 "前置未建成"
+      record "10g. 删分类 + 余额复原" -1 "前置未建成"
+    fi
+
+    # 10h. 删除一级 → 连子分类一起消失
+    if [ -n "$CAT1" ] && [ -n "$CAT2" ]; then
+      req POST /api/v1/transaction/categories/delete.json "{\"id\":\"$CAT1\"}"
+      DEL_OK=0; ok_json && DEL_OK=1
+      G1="$(cat_in_list "$CAT1")"
+      G2="$(cat_in_list "$CAT2")"
+      if [ "$DEL_OK" = 1 ] && [ "$G1" = "no" ] && [ "$G2" = "no" ]; then
+        record "10h. 删一级连子分类一起删" 0 "一级/二级都已从列表消失"
+      else
+        record "10h. 删一级连子分类一起删" 1 "del=$DEL_OK one=$G1 two=$G2"
+      fi
+    else
+      record "10h. 删一级连子分类一起删" -1 "前置未建成"
+    fi
+
+    # 10i. 标签 增 → 改名 → 隐藏 → 删
+    req POST /api/v1/transaction/tags/add.json \
+      "{\"groupId\":\"0\",\"name\":\"SMOKE-标签-$TS\"}"
+    TAG="$(jget "d.get('result',{}).get('id','')")"
+    if [ -n "$TAG" ]; then
+      req POST /api/v1/transaction/tags/modify.json \
+        "{\"id\":\"$TAG\",\"groupId\":\"0\",\"name\":\"SMOKE-标签2-$TS\"}"
+      M_OK=0; ok_json && M_OK=1
+      req POST /api/v1/transaction/tags/hide.json "{\"id\":\"$TAG\",\"hidden\":true}"
+      H_OK=0; ok_json && H_OK=1
+      req GET /api/v1/transaction/tags/list.json
+      TAG_STATE="$(python3 -c "
+import json, sys
+for t in json.load(open('$BODY_FILE'))['result']:
+    if t['id'] == '$TAG':
+        print(t.get('name', '') + '|' + ('true' if t.get('hidden') else 'false'))
+        sys.exit()
+print('NOTFOUND')
+")"
+      req POST /api/v1/transaction/tags/delete.json "{\"id\":\"$TAG\"}"
+      D_OK=0; ok_json && D_OK=1
+      if [ "$M_OK" = 1 ] && [ "$H_OK" = 1 ] && [ "$TAG_STATE" = "SMOKE-标签2-$TS|true" ] && [ "$D_OK" = 1 ]; then
+        record "10i. 标签 增→改→隐藏→删" 0 "改名+hidden=true 生效，已删除"
+      else
+        record "10i. 标签 增→改→隐藏→删" 1 "modify=$M_OK hide=$H_OK state=$TAG_STATE delete=$D_OK"
+      fi
+    else
+      record "10i. 标签 增→改→隐藏→删" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+    fi
     req POST /api/v1/accounts/delete.json "{\"id\":\"$AID\"}"
     ok_json && record "8c. 删账户 POST /accounts/delete.json" 0 "HTTP $HTTP_CODE（数据已还原）" \
             || record "8c. 删账户 POST /accounts/delete.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+
   else
     record "8a. 建账户 POST /accounts/add.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
   fi

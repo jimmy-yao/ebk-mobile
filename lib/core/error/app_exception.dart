@@ -26,3 +26,8 @@ class AppException implements Exception {
   String toString() =>
       'AppException($statusCode ${code ?? '-'}): $message';
 }
+
+/// 展示给用户的错误文案：业务错误只留服务端的 `errorMessage`，
+/// 其余（网络超时、类型错误）原样输出
+String errorMessageOf(Object error) =>
+    error is AppException ? error.message : '$error';
