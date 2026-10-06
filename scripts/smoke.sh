@@ -459,6 +459,47 @@ print('NOTFOUND')
       else
         record "9f. 删明细后余额还原" 1 "期望 0，实际 $BAL_A"
       fi
+
+      # 9g. 「调整余额」(type=1) 详情读取 —— App 详情页兜底分支的契约
+      #     add 契约（services/transactions.go doCreateTransaction）：
+      #       * categoryId 必须为 0；sourceAmount = **调到的余额**
+      #         （delta = 目标余额 − 当前余额）；账户不能已有别的明细
+      #     get 契约（实测 2.0.1，上游最新版未修）：
+      #       * 不带 trim_category → 服务端拿 categoryId=0 查分类 →
+      #         400 206000 transaction category id is invalid
+      #       * 带 trim_category=true → 200，category 为 null（App 靠这条兜底）
+      #     自带临时账户，断言失败也不污染 9a~9f 用的账户
+      ADJ_DETAIL=""; G_TYPE=""; G_CAT=""; G_ACCT=""; G_BAL=""; RAW_HTTP="-"
+      req POST /api/v1/accounts/add.json \
+        "{\"name\":\"SMOKE-ADJ-$TS\",\"category\":1,\"type\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"currency\":\"CNY\",\"balance\":\"0\",\"comment\":\"smoke 调整余额\"}"
+      AIDA="$(jget "d.get('result',{}).get('id','')")"
+      if [ -z "$AIDA" ]; then
+        ADJ_DETAIL="临时账户没建起来 HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+      else
+        req POST /api/v1/transactions/add.json \
+          "{\"type\":1,\"categoryId\":\"0\",\"time\":$TX_NOW,\"utcOffset\":480,\"sourceAccountId\":\"$AIDA\",\"destinationAccountId\":\"0\",\"sourceAmount\":700,\"destinationAmount\":0,\"hideAmount\":false,\"tagIds\":[],\"pictureIds\":[],\"comment\":\"smoke 调整余额\"}"
+        ADJID="$(jget "d.get('result',{}).get('id','')")"
+        if [ -z "$ADJID" ]; then
+          ADJ_DETAIL="add 失败 HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+        else
+          req GET "/api/v1/transactions/get.json?id=$ADJID"
+          RAW_HTTP="$HTTP_CODE"
+          req GET "/api/v1/transactions/get.json?id=$ADJID&trim_category=true"
+          G_TYPE="$(jget "d.get('result',{}).get('type','')")"
+          G_CAT="$(jget "'null' if d.get('result',{}).get('category') is None else 'set'")"
+          G_ACCT="$(jget "'yes' if d.get('result',{}).get('sourceAccount') else 'no'")"
+          req POST /api/v1/transactions/delete.json "{\"id\":\"$ADJID\"}"
+          G_BAL="$(acct_bal "$AIDA")"
+        fi
+        req POST /api/v1/accounts/delete.json "{\"id\":\"$AIDA\"}"
+      fi
+      if [ -n "$ADJ_DETAIL" ]; then
+        record "9g. 调整余额详情读取（App trim_category 兜底）" 1 "$ADJ_DETAIL"
+      elif [ "$G_TYPE" = "1" ] && [ "$G_CAT" = "null" ] && [ "$G_ACCT" = "yes" ] && [ "$G_BAL" = "0" ]; then
+        record "9g. 调整余额详情读取（App trim_category 兜底）" 0 "trim=200 type=1 category=null 账户在；裸取 HTTP $RAW_HTTP（2.0.1 缺陷）；删后余额 $G_BAL"
+      else
+        record "9g. 调整余额详情读取（App trim_category 兜底）" 1 "type=$G_TYPE cat=$G_CAT acct=$G_ACCT 余额=$G_BAL 裸取=$RAW_HTTP"
+      fi
     fi
 
     # ---------- 10. 分类 & 标签写契约（自建自删，跑完数据还原） ----------

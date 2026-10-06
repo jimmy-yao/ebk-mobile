@@ -207,7 +207,12 @@ void main() {
     expect(find.text('食品'), findsOneWidget);
   });
 
-  testWidgets('调整余额明细：只读视图，没有记账按钮', (tester) async {
+  testWidgets('调整余额明细：400/206000 兜底后进只读视图，没有记账按钮',
+      (tester) async {
+    // 复刻 ezBookkeeping 2.0.1 实况：get.json 不带 trim_category 必回
+    // 400 206000（categoryId=0 被拿去查分类），带 trim 才 200 ——
+    // 桩先拒绝一次，验证仓库层兜底真的把详情页救回来
+    var getCalls = 0;
     final container = ProviderContainer(
       overrides: [
         apiClientProvider.overrideWithValue(
@@ -217,7 +222,17 @@ void main() {
               return ok(_categoriesJson);
             }
             if (path.endsWith('/transaction/tags/list.json')) return ok([]);
-            if (path.endsWith('/transactions/get.json')) return ok(_adjustTxJson);
+            if (path.endsWith('/transactions/get.json')) {
+              getCalls++;
+              if (getCalls == 1) {
+                return <String, dynamic>{
+                  'success': false,
+                  'errorCode': 206000,
+                  'errorMessage': 'transaction category id is invalid',
+                };
+              }
+              return ok(_adjustTxJson);
+            }
             return ok(null);
           })),
         ),
@@ -239,6 +254,9 @@ void main() {
     expect(find.text('余额调整记录'), findsOneWidget);
     expect(find.text('删除这条记录'), findsOneWidget);
     expect(find.text('记账'), findsNothing);
+    expect(find.textContaining('206000'), findsNothing,
+        reason: '兜底生效后详情页不该再露出 400 错误');
+    expect(getCalls, 2, reason: '第一发被服务端拒掉，仓库层补了 trim_category 重取');
   });
 
   testWidgets('新建账户：填表提交 → payload 不含 balance → 返回上一页',

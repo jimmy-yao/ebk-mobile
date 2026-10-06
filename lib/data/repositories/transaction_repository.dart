@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/error/app_exception.dart';
 import '../../core/network/api_client.dart';
 import '../dto/transaction_dto.dart';
 
@@ -42,15 +43,38 @@ class TransactionRepository {
   final ApiClient _api;
 
   /// `GET /api/v1/transactions/get.json?id=&with_pictures=&trim_*=`
-  /// （这些 bool 参数会让响应里的 account/category/tags 变成 null，所以都不传）
+  /// （这些 bool 参数会让响应里的 account/category/tags 变成 null，所以默认都不传）
+  ///
+  /// **服务端缺陷兜底（ezBookkeeping 2.0.1，2026-10-06 上游最新版仍未修）**：
+  /// 「调整余额」(type=1) 的 `categoryId` 恒为 0，而服务端
+  /// `TransactionGetHandler` 只要没传 `trim_category=true` 就拿它去查分类
+  /// （pkg/api/transactions.go:1187 → pkg/services/transaction_categories.go:121
+  /// 的 `categoryId <= 0` 早退），于是 `get.json?id=<调整余额>` **必回**
+  /// `400 206000 transaction category id is invalid`，详情页直接报错
+  /// （实测：不带 trim=400/206000，带 trim=200）。
+  ///
+  /// 这里只对 `206000` **自动降级重取**（加 `trim_category=true`）：
+  /// * 调整余额本来就没有分类，响应里 `category` 为 null 正是它该有的样子；
+  ///   账户/标签/金额不受 trim 影响（trim 只决定 category 字段填不填）
+  /// * 该错误码在 get.json 上只可能来自 `categoryId <= 0`，即只有调整余额会撞上
+  /// * 其他错误码照常抛出，不做"什么都吞"的兜底
   Future<Transaction?> get(String id) async {
-    final result = await _api.get(
-      '/api/v1/transactions/get.json',
-      query: {'id': id},
-    );
-    if (result is! Map<String, dynamic>) return null;
-    return Transaction.fromJson(result);
+    try {
+      return _parse(
+        await _api.get('/api/v1/transactions/get.json', query: {'id': id}),
+      );
+    } on AppException catch (e) {
+      if (e.code != '206000') rethrow;
+      return _parse(await _api.get(
+        '/api/v1/transactions/get.json',
+        query: {'id': id, 'trim_category': true},
+      ));
+    }
   }
+
+  Transaction? _parse(dynamic result) => result is Map<String, dynamic>
+      ? Transaction.fromJson(result)
+      : null;
 
   /// 新建明细。`POST /api/v1/transactions/add.json`
   ///
