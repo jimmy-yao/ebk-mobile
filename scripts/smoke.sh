@@ -262,6 +262,19 @@ if [ "$RUN_CRUD" = 1 ]; then
     ok_json && record "8b. 改账户 POST /accounts/modify.json" 0 "HTTP $HTTP_CODE" \
             || record "8b. 改账户 POST /accounts/modify.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
 
+    # ---- 8b2. 账户编辑页回填靠 accounts/get.json（App 端唯一取单账户的入口） ----
+    req GET "/api/v1/accounts/get.json?id=$AID"
+    read -r GNAME GCUR GBAL <<< "$(python3 -c "
+import json, sys
+r = json.load(open('$BODY_FILE'))['result']
+print(r.get('name', '-'), r.get('currency', '-'), r.get('balance', '-'))
+")"
+    if [ "$GNAME" = "$NAME-mod" ] && [ "$GCUR" = "CNY" ] && [ "$GBAL" = "0" ]; then
+      record "8b2. 读单个账户 GET /accounts/get.json" 0 "name=$GNAME currency=$GCUR balance=$GBAL"
+    else
+      record "8b2. 读单个账户 GET /accounts/get.json" 1 "name=$GNAME currency=$GCUR balance=$GBAL（期望 $NAME-mod CNY 0）"
+    fi
+
     # ---- 8d. 编辑时**不能**带 balance（AccountModifyRequest 一见该键就拒）----
     req POST /api/v1/accounts/modify.json \
       "{\"id\":\"$AID\",\"name\":\"$NAME-mod\",\"category\":1,\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\",\"balance\":\"0\"}"
@@ -618,6 +631,36 @@ print('NOTFOUND')
     else
       record "10i. 标签 增→改→隐藏→删" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
     fi
+
+    # 10j. 分类隐藏 categories/hide.json（App 分类管理页的显示/隐藏开关）
+    req POST /api/v1/transaction/categories/add.json \
+      "{\"name\":\"SMOKE-隐藏-$TS\",\"type\":2,\"parentId\":\"0\",\"icon\":\"1\",\"iconType\":0,\"color\":\"3B7DD8\"}"
+    HID="$(jget "d.get('result',{}).get('id','')")"
+    if [ -n "$HID" ]; then
+      req POST /api/v1/transaction/categories/hide.json "{\"id\":\"$HID\",\"hidden\":true}"
+      CH_OK=0; ok_json && CH_OK=1
+      req GET /api/v1/transaction/categories/list.json
+      CAT_STATE="$(python3 -c "
+import json, sys
+for p in json.load(open('$BODY_FILE'))['result'].get('2', []):
+    if p['id'] == '$HID':
+        print('hidden' if p.get('hidden') else 'visible')
+        sys.exit()
+print('NOTFOUND')
+")"
+      req POST /api/v1/transaction/categories/hide.json "{\"id\":\"$HID\",\"hidden\":false}"
+      CU_OK=0; ok_json && CU_OK=1
+      req POST /api/v1/transaction/categories/delete.json "{\"id\":\"$HID\"}"
+      CD_OK=0; ok_json && CD_OK=1
+      if [ "$CH_OK" = 1 ] && [ "$CAT_STATE" = "hidden" ] && [ "$CU_OK" = 1 ] && [ "$CD_OK" = 1 ]; then
+        record "10j. 隐藏/取消隐藏 categories/hide.json" 0 "列表 hidden=true，已恢复并删除"
+      else
+        record "10j. 隐藏/取消隐藏 categories/hide.json" 1 "hide=$CH_OK state=$CAT_STATE unhide=$CU_OK delete=$CD_OK"
+      fi
+    else
+      record "10j. 隐藏/取消隐藏 categories/hide.json" 1 "HTTP $HTTP_CODE $(jget "d.get('errorMessage','')")"
+    fi
+
     # ---------- 11. 搜索/筛选参数实测（App 明细页发的就是这几个键） ----------
     # 实测契约（models.TransactionListRequest / TransactionListInMonthByPageRequest）：
     #   * keyword + match_mode=1 → 忽略大小写（0 会区分大小写，写死 1）
@@ -856,6 +899,34 @@ print('- - -')
   fi
 else
   record "8. 写操作（加 --crud 才跑）" -1 "未执行"
+fi
+
+# ---------- 13. 退出登录（App「退出」按钮的接口，实测契约） ----------
+# 实测（2026-10-06）：GET /api/logout.json → {"result":true} 且**只废当前 token** ——
+# 另一个会话的 token 仍 200；对已登出的 token 再调 → 401 202002 current token is invalid
+TOKEN_SAVE="$TOKEN"
+TOKEN="$(curl -sS -X POST -H 'Content-Type: application/json' -H 'X-Timezone-Name: Asia/Shanghai' \
+         --data "{\"loginName\":\"$EBK_USER\",\"password\":\"$EBK_PASS\"}" \
+         "$EBK_BASE_URL/api/authorize.json" 2>/dev/null \
+         | python3 -c "import json,sys
+try:    print(json.load(sys.stdin)['result']['token'])
+except Exception: print('')")"
+if [ -z "$TOKEN" ]; then
+  record "13. 退出 GET /api/logout.json" -1 "二次登录拿不到 token（跳过）"
+  TOKEN="$TOKEN_SAVE"
+else
+  req GET /api/logout.json
+  LO_CODE="$HTTP_CODE"
+  req GET /api/v1/accounts/list.json
+  DEAD_CODE="$HTTP_CODE"          # 预期 401：刚登出的 token 已废
+  TOKEN="$TOKEN_SAVE"
+  req GET /api/v1/accounts/list.json
+  ALIVE_CODE="$HTTP_CODE"         # 预期 200：原会话不受影响
+  if [ "$LO_CODE" = 200 ] && [ "$DEAD_CODE" = 401 ] && [ "$ALIVE_CODE" = 200 ]; then
+    record "13. 退出 GET /api/logout.json" 0 "登出 token→401、另一会话→200（互不影响）"
+  else
+    record "13. 退出 GET /api/logout.json" 1 "logout=$LO_CODE dead=$DEAD_CODE alive=$ALIVE_CODE"
+  fi
 fi
 
 # ---------- 汇总 ----------
